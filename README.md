@@ -1,6 +1,6 @@
 # web2md-mcp-server
 
-Servidor MCP (stdio, spec MCP 2026-07-28) que recebe uma URL, faz a requisição a partir da sua máquina e devolve a página como Markdown GFM fiel à estrutura original, com frontmatter YAML. A lógica completa está em [`SPEC.md`](./SPEC.md).
+Servidor MCP que recebe uma URL, faz a requisição a partir da sua máquina e devolve a página como Markdown GFM fiel à estrutura original, com frontmatter YAML. A lógica completa está em [`SPEC.md`](./SPEC.md).
 
 A tool exposta se chama `web2md_fetch_markdown`. Ela não altera o servidor remoto, mas grava cada conversão em disco (ver [Pasta de saída](#pasta-de-saída)); por isso `readOnlyHint` é `false` (`destructiveHint: false`, `idempotentHint` e `openWorldHint` ficam `true`).
 
