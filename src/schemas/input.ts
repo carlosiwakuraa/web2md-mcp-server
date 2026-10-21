@@ -44,6 +44,12 @@ export const InputSchema = z
       .describe(
         'Se true, anexa ao final a seção "## Links da página" com todos os links do conteúdo convertido (texto e URL absoluta). Padrão false.',
       ),
+    return_content: z
+      .boolean()
+      .default(true)
+      .describe(
+        'Se true (padrão), devolve o Markdown completo no contexto do modelo com paginação via max_chars/start_index. Se false, salva o arquivo em disco e devolve apenas metadados (url, título, tamanho, caminho) — útil para fetch em lote ou quando o conteúdo será lido depois por uma ferramenta de arquivo.',
+      ),
   })
   .strict();
 

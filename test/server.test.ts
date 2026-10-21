@@ -153,7 +153,7 @@ describe("servidor MCP (stdio, spec 2026-07-28)", () => {
     expect(input.required).toEqual(["url"]);
     expect(input.additionalProperties).toBe(false);
     expect(Object.keys(input.properties).sort()).toEqual(
-      ["include_links", "max_chars", "mode", "start_index", "url"].sort(),
+      ["include_links", "max_chars", "mode", "return_content", "start_index", "url"].sort(),
     );
     expect(input.properties.mode.enum).toEqual(["article", "full"]);
     expect(input.properties.mode.default).toBe("article");
@@ -161,6 +161,7 @@ describe("servidor MCP (stdio, spec 2026-07-28)", () => {
     expect(input.properties.start_index.default).toBe(0);
     expect(input.properties.start_index.minimum).toBe(0);
     expect(input.properties.include_links.default).toBe(false);
+    expect(input.properties.return_content.default).toBe(true);
     for (const p of Object.values(input.properties) as Array<{ description?: string }>) {
       expect(p.description).toBeTruthy();
     }
@@ -265,6 +266,32 @@ describe("servidor MCP (stdio, spec 2026-07-28)", () => {
     const r = await client.callTool({ url: `${baseUrl}/doc.md`, start_index: 10_000_000 });
     expect(r.result!.isError).toBe(true);
     expect(r.result!.content[0].text).toMatch(/caracteres no total/);
+  });
+
+  it("return_content: false — texto compacto com 'Conversão concluída.', sem frontmatter, saved_path preenchido e next_start_index nulo", async () => {
+    const url = `${baseUrl}/doc.md`;
+    const r = await client.callTool({ url, return_content: false });
+    expect(r.result!.isError).toBeFalsy();
+
+    const text: string = r.result!.content[0].text;
+    expect(text).toContain("Conversão concluída.");
+    // Não deve conter o Markdown completo (sem frontmatter YAML)
+    expect(text.startsWith("---\n")).toBe(false);
+    expect(text).not.toContain("fetched_at:");
+
+    const sc = r.result!.structuredContent;
+    expect(typeof sc.saved_path).toBe("string");
+    expect(sc.next_start_index).toBeNull();
+  });
+
+  it("return_content: true (padrão) continua entregando Markdown completo com frontmatter", async () => {
+    const url = `${baseUrl}/doc.md`;
+    const r = await client.callTool({ url, return_content: true });
+    expect(r.result!.isError).toBeFalsy();
+
+    const text: string = r.result!.content[0].text;
+    expect(text.startsWith(`---\nurl: ${url}\n`)).toBe(true);
+    expect(text).toContain("source: native-markdown");
   });
 
   it("nada além do protocolo vai para stdout; logs ficam em stderr", () => {

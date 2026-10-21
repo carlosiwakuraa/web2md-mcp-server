@@ -1,17 +1,17 @@
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { OUTPUT_DIR_ENV } from "./constants.js";
 import type { Mode } from "./types.js";
 
 const MAX_SLUG_CHARS = 100;
 
-/** Pasta de saída: `WEB2MD_OUTPUT_DIR` se definida, senão `output/` na raiz do projeto (vale para src/ e dist/). */
+/** Pasta de saída: `WEB2MD_OUTPUT_DIR` se definida, senão `<tmpdir>/web2md`. */
 export function resolveOutputDir(env: NodeJS.ProcessEnv = process.env): string {
   const custom = env[OUTPUT_DIR_ENV]?.trim();
   if (custom) return path.resolve(custom);
-  return fileURLToPath(new URL("../output", import.meta.url));
+  return path.join(os.tmpdir(), "web2md");
 }
 
 /**

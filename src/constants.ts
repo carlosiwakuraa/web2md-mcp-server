@@ -1,5 +1,5 @@
 export const SERVER_NAME = "web2md-mcp-server";
-export const SERVER_VERSION = "1.0.0";
+export const SERVER_VERSION = "1.1.0";
 export const TOOL_NAME = "web2md_fetch_markdown";
 
 /** Variável de ambiente que sobrescreve a pasta onde as conversões são salvas. */

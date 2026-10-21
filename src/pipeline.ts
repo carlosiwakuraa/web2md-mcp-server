@@ -82,7 +82,7 @@ export function formatLocalIso(date: Date = new Date()): string {
 export async function runPipeline(
   input: ToolInput,
   fetchOpts?: FetchOptions,
-): Promise<PageSlice & { source: string; url: string; document: string }> {
+): Promise<PageSlice & { source: string; url: string; document: string; title?: string }> {
   const fetched = await fetchPage(input.url, fetchOpts);
 
   let fm: Frontmatter;
@@ -115,5 +115,5 @@ export async function runPipeline(
 
   const document = renderDocument(fm, body);
   const slice = paginate(document, input.start_index, input.max_chars);
-  return { ...slice, source: fm.source, url: fm.url, document };
+  return { ...slice, source: fm.source, url: fm.url, document, title: fm.title };
 }

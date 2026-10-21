@@ -21,6 +21,7 @@ Parâmetros:
 - max_chars: limite de caracteres por resposta (padrão 50000).
 - start_index: posição do documento onde a resposta começa (padrão 0), para paginar.
 - include_links: se true, anexa a seção "## Links da página" com todos os links do conteúdo.
+- return_content: se false, não devolve o Markdown no contexto; salva em disco e retorna só metadados (url, título, chars, caminho). Padrão true.
 
 Retorno: texto Markdown com um frontmatter YAML (url, canonical, title, description, lang, fetched_at, source), seguido do corpo com um único H1. Se o servidor responder com Markdown nativo, ele é devolvido diretamente (source: native-markdown). O structuredContent traz { url, source, total_chars, next_start_index, saved_path }.
 
@@ -29,6 +30,15 @@ Salvamento: toda conversão bem-sucedida é gravada na pasta output/ do projeto 
 Paginação: se o documento passar de max_chars, a resposta termina com o marcador "[Conteúdo truncado: exibidos caracteres X–Y de TOTAL. Para continuar, chame novamente com start_index=N]" (e next_start_index no structuredContent). Chame de novo com o mesmo url/mode e start_index=N para ler o restante; o frontmatter só aparece na primeira parte. Um start_index além do fim do documento é um erro.
 
 Erros (isError, com mensagem descritiva): URL inválida; Erro HTTP 4xx/5xx; timeout (30 s); falha de rede; content-type não suportado (só HTML e Markdown; PDFs e imagens não são convertidos); página vazia após a extração (tente mode="full"); página que depende de JavaScript para renderizar (não há execução de JS). Não altera nada no servidor remoto.`;
+
+function compactSummary(url: string, title: string | undefined, chars: number, savedPath: string | null): string {
+  const lines = ['Conversão concluída.', ''];
+  lines.push(`url: ${url}`);
+  if (title) lines.push(`title: ${title}`);
+  lines.push(`chars: ${chars.toLocaleString('pt-BR')}`);
+  lines.push(`saved: ${savedPath ?? '(falha ao salvar)'}`);
+  return lines.join('\n');
+}
 
 /** Executa a tool e traduz o resultado/erros para CallToolResult. Nunca lança. */
 export async function handleFetchMarkdown(input: ToolInput): Promise<CallToolResult> {
@@ -41,13 +51,17 @@ export async function handleFetchMarkdown(input: ToolInput): Promise<CallToolRes
     } catch (saveErr) {
       console.error("[web2md] não foi possível salvar a conversão:", saveErr);
     }
+    const text = input.return_content
+      ? page.text
+      : compactSummary(page.url, page.title, page.total_chars, savedPath);
+    const next_start_index = input.return_content ? page.next_start_index : null;
     return {
-      content: [{ type: "text", text: page.text }],
+      content: [{ type: "text", text }],
       structuredContent: {
         url: page.url,
         source: page.source,
         total_chars: page.total_chars,
-        next_start_index: page.next_start_index,
+        next_start_index,
         saved_path: savedPath,
       },
     };
