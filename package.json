@@ -1,6 +1,6 @@
 {
   "name": "web2md-mcp-server",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "MCP server that fetches a URL locally and returns faithful GFM Markdown",
   "type": "module",
   "main": "dist/index.js",
