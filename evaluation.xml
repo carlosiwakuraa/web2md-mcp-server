@@ -1,0 +1,42 @@
+<evaluation>
+   <qa_pair>
+      <question>Start at https://www.rfc-editor.org/info/rfc7540 (the HTTP/2 specification published in 2015). That RFC has since been made obsolete by a newer RFC. In the newer RFC, the SETTINGS parameter that advertises the largest frame payload a sender is willing to receive has an initial value. What is that initial value, in octets? Answer with digits only, no separators.</question>
+      <answer>16384</answer>
+   </qa_pair>
+   <qa_pair>
+      <question>In https://www.rfc-editor.org/rfc/rfc9110.html (HTTP Semantics), the appendix on changes from earlier specifications says status code 421 was previously defined in a section of an older RFC. In that older RFC, what is the exact title of the section that originally defined 421 (title text only, without the section number)?</question>
+      <answer>The 421 (Misdirected Request) Status Code</answer>
+   </qa_pair>
+   <qa_pair>
+      <question>In the "What's New in Python 3.12" page (https://docs.python.org/3.12/whatsnew/3.12.html), one PEP introduces a unique GIL per sub-interpreter. That PEP declares in its header that it requires another PEP. What is the full title of that required PEP, as written in the heading of its own page (without the "PEP NNN" prefix)?</question>
+      <answer>Immortal Objects, Using a Fixed Refcount</answer>
+   </qa_pair>
+   <qa_pair>
+      <question>In the W3C Recommendation "Extensible Markup Language (XML) 1.0 (Fifth Edition)" dated 26 November 2008 (https://www.w3.org/TR/2008/REC-xml-20081126/), the appendix on character classes says its productions are orphaned because of changes to two other productions. Take the lower-numbered of those two productions. In its definition, how many bracketed character ranges (items of the form [x-y] or [#xN-#xM]) appear? Answer with a single integer.</question>
+      <answer>14</answer>
+   </qa_pair>
+   <qa_pair>
+      <question>In the same W3C Recommendation, XML 1.0 Fifth Edition of 26 November 2008 (https://www.w3.org/TR/2008/REC-xml-20081126/), the "Origin and Goals" subsection of the Introduction contains a numbered list of design goals. What is the number of the goal that states that terseness in XML markup is of minimal importance? Answer with a single integer.</question>
+      <answer>10</answer>
+   </qa_pair>
+   <qa_pair>
+      <question>Start at https://www.rfc-editor.org/info/rfc6455 (The WebSocket Protocol). Among the RFCs that updated it, one bootstraps WebSockets over HTTP/2 and defines a new HTTP/2 SETTINGS parameter. In the IANA registration for that parameter, what is its code value? Answer exactly as written in that RFC (for example 0x1).</question>
+      <answer>0x8</answer>
+   </qa_pair>
+   <qa_pair>
+      <question>In the Python 3.12 documentation for the datetime module (https://docs.python.org/3.12/library/datetime.html), the strftime()/strptime() format-code table has a directive for the ISO 8601 week number, and it points to numbered notes. According to the note about strptime() and optional leading zeros, how many directives are listed as accepting an optional leading zero (not counting the one directive the note says does require it)? Answer with a single integer.</question>
+      <answer>10</answer>
+   </qa_pair>
+   <qa_pair>
+      <question>In the Python 3.12 documentation, the sys module page (https://docs.python.org/3.12/library/sys.html) describes sys.int_info with two fields related to the limit on integer-string conversion length: the default maximum and the check threshold. Using the actual values documented for those two fields in the Python 3.12 "Built-in Types" page (https://docs.python.org/3.12/library/stdtypes.html), what is the default maximum number of digits minus the lowest limit that can be configured? Answer with a single integer.</question>
+      <answer>3660</answer>
+   </qa_pair>
+   <qa_pair>
+      <question>Start at the CSS 2.1 Recommendation of 7 June 2011 (https://www.w3.org/TR/2011/REC-CSS2-20110607/) and follow its table of contents to the section "Calculating a selector's specificity". Among the example selectors listed in that section, excluding the ones that use an ID selector or a style attribute, which one has the highest specificity? Answer with the selector exactly as written in the example.</question>
+      <answer>li.red.level</answer>
+   </qa_pair>
+   <qa_pair>
+      <question>In the chapter "Shell Command Language" of POSIX.1-2017 (Issue 7, 2018 edition, https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html), section 2.14 introduces the special built-in utilities, and each one is then documented in its own subsection with a NAME heading. How many special built-in utilities are documented in this chapter? Answer with a single integer.</question>
+      <answer>15</answer>
+   </qa_pair>
+</evaluation>

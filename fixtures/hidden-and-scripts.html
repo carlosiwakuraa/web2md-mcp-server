@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Fixture hidden-and-scripts</title>
+</head>
+<body>
+<h1>Visível</h1>
+<script>var x = 1; document.title = "x";</script>
+<style>p { color: red; }</style>
+<noscript>Ative o JavaScript</noscript>
+<svg width="10" height="10"><text>Texto do SVG</text></svg>
+<form action="/busca"><label>Buscar</label><input name="q"><button type="submit">Enviar busca</button></form>
+<button>Clique aqui</button>
+<p hidden>Oculto por atributo.</p>
+<div aria-hidden="true">Oculto por aria.</div>
+<p aria-hidden="false">Aria falso fica.</p>
+<ul><li>Item A</li><li hidden>Item B oculto</li><li>Item C</li></ul>
+<p>Texto <button>botão</button> final.</p>
+<p>Parágrafo visível.</p>
+</body>
+</html>

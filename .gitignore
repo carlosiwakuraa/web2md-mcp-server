@@ -1,0 +1,28 @@
+# Dependências
+node_modules/
+
+# Build
+dist/
+
+# Saída gerada pelo servidor (markdowns convertidos)
+output/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Logs
+*.log
+npm-debug.log*
+
+# Variáveis de ambiente
+.env
+.env.local
+.env.*.local
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo

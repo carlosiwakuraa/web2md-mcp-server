@@ -1,0 +1,11 @@
+# Régua
+
+Antes
+
+---
+
+Depois
+
+---
+
+Fim

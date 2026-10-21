@@ -1,0 +1,38 @@
+{
+  "name": "web2md-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server that fetches a URL locally and returns faithful GFM Markdown",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "web2md-mcp-server": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "test": "vitest run",
+    "clean": "rm -rf dist"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.3.1",
+    "@mozilla/readability": "^0.6.0",
+    "chardet": "^2.2.0",
+    "iconv-lite": "^0.7.3",
+    "jsdom": "^29.1.1",
+    "turndown": "^7.2.4",
+    "turndown-plugin-gfm": "^1.0.2",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/jsdom": "^30.0.0",
+    "@types/node": "^26.6.5",
+    "@types/turndown": "^5.0.6",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.12"
+  }
+}
