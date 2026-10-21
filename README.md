@@ -35,6 +35,47 @@ Em `claude_desktop_config.json`:
 
 Em desenvolvimento, use `npm run dev` (roda `src/index.ts` com `tsx`).
 
+## Configuração de rede
+
+### Certificados CA corporativos (proxies TLS, redes internas)
+
+Em ambientes com certificados CA próprios (bancos, empresas, VPNs), as requisições podem falhar com erro de certificado. Passe `NODE_OPTIONS=--use-system-ca` via `env` no seu cliente MCP para que o Node.js confie no store de certificados do sistema operacional:
+
+**Claude Desktop** (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "web2md": {
+      "command": "node",
+      "args": ["/caminho/para/web2md/dist/index.js"],
+      "env": {
+        "NODE_OPTIONS": "--use-system-ca"
+      }
+    }
+  }
+}
+```
+
+**VS Code / Copilot** (`.vscode/mcp.json` ou `settings.json`):
+
+```json
+{
+  "servers": {
+    "web2md": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["/caminho/para/web2md/dist/index.js"],
+      "env": {
+        "NODE_OPTIONS": "--use-system-ca"
+      }
+    }
+  }
+}
+```
+
+> `--use-system-ca` requer Node.js 22 ou superior. Em versões anteriores, use `NODE_EXTRA_CA_CERTS=/caminho/para/ca-bundle.pem` apontando para o arquivo `.pem` com os certificados da sua organização.
+
 ## Parâmetros
 
 | Parâmetro | Tipo | Padrão | Descrição |
