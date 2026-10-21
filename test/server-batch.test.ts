@@ -222,6 +222,19 @@ describe("tool de lote via stdio", () => {
     expect(many.result!.isError).toBe(true);
   });
 
+  it("URLs que só diferem pelo fragmento resultam em um único arquivo", async () => {
+    const r = await client.callTool(BATCH, {
+      urls: [`${baseUrl}/page1.md#a`, `${baseUrl}/page1.md#b`],
+      return_content: false,
+    });
+    expect(r.result!.isError).toBeFalsy();
+    const sc = r.result!.structuredContent;
+    expect(sc.total).toBe(1);
+    expect(sc.items).toHaveLength(1);
+    expect(sc.items[0].status).toBe("ok");
+    expect(existsSync(sc.items[0].saved_path)).toBe(true);
+  });
+
   it("a tool antiga continua funcionando", async () => {
     const r = await client.callTool("web2md_fetch_markdown", { url: `${baseUrl}/page1.md` });
     expect(r.result!.isError).toBeFalsy();

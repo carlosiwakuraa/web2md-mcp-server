@@ -1,18 +1,25 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { handleBatch } from "../src/batch.js";
+import { runPipeline } from "../src/pipeline.js";
 import type { BatchStructured, PipelineResult } from "../src/batch-types.js";
 import type { BatchInput } from "../src/schemas/batch-input.js";
 import { BatchInputSchema } from "../src/schemas/batch-input.js";
 import type { ToolInput } from "../src/types.js";
+
+vi.mock("../src/pipeline.js", () => ({ runPipeline: vi.fn() }));
 
 const tmp = mkdtempSync(path.join(tmpdir(), "web2md-batch-test-"));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
 beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation(() => {});
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 const SECRET = "CONTEUDO-SECRETO-DO-DOCUMENTO";
@@ -166,8 +173,8 @@ describe("handleBatch", () => {
     expect(s.groups).toEqual([]);
     const text = textOf(result);
     for (const url of urls) expect(text).toContain(`${SECRET} ${url}`);
-    // o document completo (com "(documento completo)") nunca é usado: só page.text
-    expect(text).not.toContain("(documento completo)");
+    // usa o documento completo (nunca page.text, que carregaria o marcador de start_index)
+    for (const url of urls) expect(text).toContain(`${SECRET} ${url} (documento completo)`);
     // structuredContent só tem metadados
     expect(JSON.stringify(s)).not.toContain(SECRET);
   });
@@ -204,7 +211,7 @@ describe("handleBatch", () => {
     expect(without.objective).toBeNull();
   });
 
-  it("falha ao salvar não derruba o lote: item segue ok com saved_path null e fica fora do plano de subagentes", async () => {
+  it("falha ao salvar vira item error (sem saved_path nem texto) e não derruba o lote", async () => {
     const save = async (_doc: string, pageUrl: string) => {
       if (pageUrl === u(2)) throw new Error("disco cheio");
       return `/saved/${encodeURIComponent(pageUrl)}.md`;
@@ -216,25 +223,153 @@ describe("handleBatch", () => {
     });
     expect(result.isError).toBeUndefined();
     const s = structuredOf(result);
-    expect(s.succeeded).toBe(4);
-    expect(s.failed).toBe(0);
-    expect(s.items[1]!.status).toBe("ok");
+    expect(s.succeeded).toBe(3);
+    expect(s.failed).toBe(1);
+    expect(s.items[1]!.status).toBe("error");
+    expect(s.items[1]!.error).toBe("Convertida, mas não foi possível salvar o arquivo: disco cheio");
     expect(s.items[1]!.saved_path).toBeNull();
-    expect(s.dispatch).toBe("subagents");
-    expect(s.groups.flatMap((g) => g.files.map((f) => f.url))).toEqual([u(1), u(3), u(4)]);
-    expect(JSON.stringify(result)).not.toContain(SECRET);
-    expect(console.error).toHaveBeenCalled();
+    // 3 arquivos ok com inline_max_files 3: inline, sem o texto do item que falhou ao salvar
+    expect(s.dispatch).toBe("inline");
+    expect(textOf(result)).not.toContain(`${SECRET} ${u(2)}`);
+    for (const item of s.items.filter((i) => i.status === "ok")) expect(item.saved_path).not.toBeNull();
   });
 
-  it("falha ao salvar em inline mantém o texto no contexto", async () => {
+  it("falha ao salvar com todas as URLs: isError true e nenhum texto no resultado", async () => {
     const save = async () => {
       throw new Error("sem permissão");
     };
     const result = await handleBatch(makeInput([u(1)]), { run: okRun, save });
+    expect(result.isError).toBe(true);
+    expect(structuredOf(result).items[0]!.error).toContain("sem permissão");
+    expect(JSON.stringify(result)).not.toContain(SECRET);
+  });
+
+  it("inline trunca o documento completo com marcador para o saved_path, sem start_index", async () => {
+    const long = "x".repeat(500);
+    const run = async (input: ToolInput): Promise<PipelineResult> => ({
+      ...fakePage(input.url),
+      text: `${long.slice(0, 100)}\n\n[chame novamente com start_index=100]`,
+      document: long,
+    });
+    const result = await handleBatch(makeInput([u(1)], { max_chars: 100 }), { run, save: fakeSave });
+    const text = textOf(result);
+    expect(structuredOf(result).dispatch).toBe("inline");
+    expect(text).toContain("x".repeat(100));
+    expect(text).not.toContain("x".repeat(101));
+    expect(text).not.toContain("start_index");
+    expect(text).toContain(`/saved/${encodeURIComponent(u(1))}.md`);
+  });
+
+  it("deduplica ignorando o fragmento, mantendo a primeira ocorrência como pedida", async () => {
+    const run = vi.fn(okRun);
+    const result = await handleBatch(makeInput([`${u(1)}#secao`, u(1), `${u(2)}#a`, `${u(2)}#b`]), {
+      run,
+      save: fakeSave,
+    });
+    expect(run).toHaveBeenCalledTimes(2);
     const s = structuredOf(result);
+    expect(s.total).toBe(2);
+    expect(s.items.map((i) => i.url)).toEqual([`${u(1)}#secao`, `${u(2)}#a`]);
+  });
+
+  it("URLs distintas que convergem para o mesmo slug gravam uma única vez e contam como um arquivo", async () => {
+    const dest = "https://exemplo.com/destino";
+    const run = async (): Promise<PipelineResult> => {
+      await new Promise((r) => setTimeout(r, 5));
+      return fakePage(dest);
+    };
+    const save = vi.fn(fakeSave);
+    // 4 itens ok, mas 1 arquivo distinto: com inline_max_files 1 ainda é inline
+    const urls = [1, 2, 3, 4].map(u);
+    const result = await handleBatch(makeInput(urls, { inline_max_files: 1 }), { run, save, concurrency: 4 });
+    expect(save).toHaveBeenCalledTimes(1);
+    const s = structuredOf(result);
+    expect(s.total).toBe(4);
+    expect(s.succeeded).toBe(4);
     expect(s.dispatch).toBe("inline");
-    expect(s.items[0]!.saved_path).toBeNull();
-    expect(textOf(result)).toContain(SECRET);
+    expect(new Set(s.items.map((i) => i.saved_path)).size).toBe(1);
+    // o documento aparece uma única vez no inline
+    expect(textOf(result).split("(documento completo)").length - 1).toBe(1);
+  });
+
+  it("slug compartilhado: falha da gravação única derruba todos os itens que a compartilham", async () => {
+    const run = async (): Promise<PipelineResult> => fakePage("https://exemplo.com/destino");
+    const save = vi.fn(async () => {
+      throw new Error("falhou");
+    });
+    const s = structuredOf(await handleBatch(makeInput([u(1), u(2)]), { run, save }));
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(s.items.map((i) => i.status)).toEqual(["error", "error"]);
+  });
+
+  it("grava em deps.outputDir quando o save padrão é usado", async () => {
+    const dir = path.join(tmp, "custom-out");
+    const s = structuredOf(await handleBatch(makeInput([u(1)]), { run: okRun, outputDir: dir }));
+    expect(s.output_dir).toBe(dir);
+    expect(s.items[0]!.saved_path!.startsWith(dir)).toBe(true);
+    expect(readFileSync(s.items[0]!.saved_path!, "utf8")).toContain("(documento completo)");
+  });
+
+  describe("prazo global", () => {
+    it("URLs não concluídas viram erro, o lote retorna no prazo e as pendentes não iniciam", async () => {
+      vi.useFakeTimers();
+      const run = vi.fn((input: ToolInput) =>
+        input.url === u(1) ? Promise.resolve(fakePage(input.url)) : new Promise<PipelineResult>(() => {}),
+      );
+      const save = vi.fn(fakeSave);
+      const promise = handleBatch(makeInput([u(1), u(2), u(3), u(4)]), {
+        run,
+        save,
+        concurrency: 2,
+        deadlineMs: 2000,
+      });
+      await vi.advanceTimersByTimeAsync(2000);
+      const result = await promise;
+      const s = structuredOf(result);
+      expect(s.items.map((i) => i.status)).toEqual(["ok", "error", "error", "error"]);
+      expect(s.items[1]!.error).toBe("Prazo do lote (2 s) esgotado antes de concluir esta URL");
+      expect(s.items[3]!.error).toBe("Prazo do lote (2 s) esgotado antes de concluir esta URL");
+      expect(s.succeeded).toBe(1);
+      expect(s.failed).toBe(3);
+      // u(4) nunca iniciou (a faixa 2 ficou presa em u(2); a 1 pegou u(3))
+      expect(run).toHaveBeenCalledTimes(3);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("conclusão tardia não grava arquivo nem altera o resultado", async () => {
+      vi.useFakeTimers();
+      let finish!: (page: PipelineResult) => void;
+      const run = () => new Promise<PipelineResult>((resolve) => (finish = resolve));
+      const save = vi.fn(fakeSave);
+      const promise = handleBatch(makeInput([u(1)]), { run, save, deadlineMs: 1000 });
+      await vi.advanceTimersByTimeAsync(1000);
+      const result = await promise;
+      finish(fakePage(u(1)));
+      await vi.advanceTimersByTimeAsync(10);
+      expect(save).not.toHaveBeenCalled();
+      const s = structuredOf(result);
+      expect(s.items[0]!.status).toBe("error");
+      expect(s.items[0]!.saved_path).toBeNull();
+      expect(result.isError).toBe(true);
+    });
+
+    it("sem estourar o prazo não deixa timer pendente", async () => {
+      vi.useFakeTimers();
+      await handleBatch(makeInput([u(1)]), { run: okRun, save: fakeSave, deadlineMs: 5000 });
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("run padrão limita o timeout do fetch ao menor entre FETCH_TIMEOUT_MS e o tempo restante", async () => {
+      const mocked = vi.mocked(runPipeline);
+      mocked.mockClear();
+      mocked.mockImplementation(async (input) => fakePage(input.url));
+      await handleBatch(makeInput([u(1)]), { save: fakeSave, deadlineMs: 5000 });
+      await handleBatch(makeInput([u(2)]), { save: fakeSave });
+      const [first, second] = mocked.mock.calls;
+      expect(first![1]!.timeoutMs).toBeLessThanOrEqual(5000);
+      expect(first![1]!.timeoutMs).toBeGreaterThan(0);
+      expect(second![1]!.timeoutMs).toBe(30_000);
+    });
   });
 
   it("usa a URL final (redirect) para final_url e para o slug dos itens ok", async () => {

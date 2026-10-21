@@ -25,3 +25,5 @@ export const BATCH_CONCURRENCY = 4;
 export const DEFAULT_INLINE_MAX_FILES = 3;
 /** Quantidade de arquivos por subagente no plano de despacho. */
 export const DEFAULT_FILES_PER_AGENT = 5;
+/** Prazo global do lote: abaixo do timeout típico (60 s) dos clientes MCP. URLs não concluídas viram erro. */
+export const BATCH_DEADLINE_MS = 50_000;

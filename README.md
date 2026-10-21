@@ -99,7 +99,7 @@ Além do texto, a resposta traz `structuredContent` com `{ url, source, total_ch
 
 ### Pasta de saída
 
-Toda conversão bem-sucedida é salva em `output/` (na raiz do projeto, ao lado de `dist/`). O arquivo sempre contém o **documento completo** (frontmatter + corpo), independentemente de `max_chars` e `start_index`, e `saved_path` no `structuredContent` traz o caminho absoluto.
+Toda conversão bem-sucedida é salva em `<tmpdir>/web2md/` (a pasta temporária do sistema). O arquivo sempre contém o **documento completo** (frontmatter + corpo), independentemente de `max_chars` e `start_index`, e `saved_path` no `structuredContent` traz o caminho absoluto.
 
 - Nome do arquivo: `<host>_<caminho>-<hash>.md`, com `.full` antes da extensão em `mode="full"`. O hash de 8 caracteres cobre a URL inteira (com query), então URLs diferentes não colidem.
 - Reconverter a mesma URL e modo sobrescreve o arquivo (inclusive nas chamadas de paginação).
@@ -127,14 +127,14 @@ A conversão é **determinística**: é feita pelo servidor, sem chamar modelo, 
 
 | Parâmetro | Tipo | Padrão | Descrição |
 |---|---|---|---|
-| `urls` | array de strings (1–20) | obrigatório | URLs `http://` ou `https://`. URLs repetidas são convertidas uma única vez. |
+| `urls` | array de strings (1–20) | obrigatório | URLs `http://` ou `https://`. URLs repetidas são convertidas uma única vez; o fragmento `#...` é removido antes de comparar. |
 | `mode` | `"article"` \| `"full"` | `"article"` | Modo de extração aplicado a todas as URLs (mesmo significado da tool de URL única). |
 | `include_links` | booleano | `false` | Anexa a seção `## Links da página` em cada documento. |
 | `return_content` | booleano | `true` | `false` salva tudo em disco e devolve só o manifesto, sem conteúdo no contexto. `true` traz o conteúdo conforme a tabela abaixo. |
 | `inline_max_files` | inteiro (1–20) | `3` | Com `return_content=true`, quantidade máxima de arquivos convertidos que ainda vêm inline. Acima disso, a resposta é um plano de subagentes. |
 | `files_per_agent` | inteiro (1–20) | `5` | No plano de subagentes, quantos arquivos cada subagente recebe. `1` = um subagente por arquivo. |
 | `objective` | string (até 2000 caracteres) | não definido | O que você quer das páginas (ex.: "comparar as opções de autenticação"). É repassado aos subagentes para guiar a extração. |
-| `max_chars` | inteiro (100–500000) | `50000` | Só no modo inline: máximo de caracteres de cada documento no contexto. O arquivo salvo é sempre completo. |
+| `max_chars` | inteiro (100–500000) | `50000` | Só no modo inline: máximo de caracteres de cada documento no contexto. Um documento maior termina com um marcador que aponta para o arquivo salvo completo; o lote não tem `start_index`, então para ler o restante leia o `saved_path`. |
 
 ### O que acontece conforme a quantidade de arquivos
 
@@ -174,8 +174,9 @@ O texto da resposta muda conforme o `dispatch` (manifesto, documentos inline ou 
 ### Detalhes de comportamento
 
 - **Concorrência 4:** até 4 URLs são buscadas ao mesmo tempo; a ordem de `items` e `groups` segue a ordem original das URLs.
-- **Deduplicação:** URLs repetidas na lista são convertidas uma única vez.
-- **Falha isolada por URL:** um erro (404, timeout, página que depende de JavaScript etc.) marca só aquele item como `error`, com a mensagem em `error`; as demais URLs seguem normalmente e só as convertidas entram no plano.
+- **Deduplicação:** as URLs são normalizadas sem o fragmento `#...` antes de comparar; repetidas são convertidas uma única vez. URLs que convergem para o mesmo arquivo final contam como um só arquivo.
+- **Falha isolada por URL:** um erro (404, timeout, página que depende de JavaScript etc.) marca só aquele item como `error`, com a mensagem em `error`; as demais URLs seguem normalmente e só as convertidas entram no plano. Falha ao salvar o arquivo também conta como erro daquele item: nada fica `ok` sem arquivo salvo.
+- **Prazo global de 50 s:** URLs não concluídas até lá viram erro `Prazo do lote ... esgotado` e o resultado parcial é devolvido; os arquivos já salvos permanecem.
 - **Nomes de arquivo:** iguais aos da tool de URL única (`<host>_<caminho>-<hash>.md`, com `.full` em `mode="full"`). O `slug` de cada item é o nome do arquivo sem `.md` e serve de identificador, inclusive como nome do subagente.
 - **Pasta de saída:** a mesma da tool de URL única; para trocar, defina `WEB2MD_OUTPUT_DIR`. O arquivo salvo contém sempre o documento completo, independentemente de `max_chars`.
 

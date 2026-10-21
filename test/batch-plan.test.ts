@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decideDispatch, planGroups, renderBatchText, slugFromFileName } from "../src/batch-plan.js";
+import { decideDispatch, planGroups, renderBatchText, slugFromFileName, truncateInline } from "../src/batch-plan.js";
 import type { BatchItem, BatchStructured } from "../src/batch-types.js";
 
 function okItem(n: number, over: Partial<BatchItem> = {}): BatchItem {
@@ -87,10 +87,49 @@ describe("planGroups", () => {
     expect(groups.every((g) => g.files.length === 1)).toBe(true);
   });
 
-  it("trunca agent_name de grupo unitário em 60 chars", () => {
-    const slug = "x".repeat(100);
+  it("agent_name de grupo unitário: slug até 60 chars fica inteiro; maior preserva o final", () => {
+    const exact = "y".repeat(60);
+    expect(planGroups([okItem(1, { slug: exact })], 5)[0].agent_name).toBe(exact);
+    const slug = `${"x".repeat(80)}-1234abcd.full`;
     const [g] = planGroups([okItem(1, { slug })], 5);
-    expect(g.agent_name).toBe("x".repeat(60));
+    expect(g.agent_name).toBe(`${"x".repeat(46)}~${slug.slice(-13)}`);
+    expect(g.agent_name.length).toBe(60);
+    expect(g.agent_name.endsWith("-1234abcd.full")).toBe(false);
+    expect(g.agent_name.endsWith("1234abcd.full")).toBe(true);
+  });
+
+  it("slugs longos que diferem só no hash geram agent_name distintos", () => {
+    const base = "example.com_" + "p".repeat(80);
+    const items = [
+      okItem(1, { slug: `${base}-aaaa1111`, saved_path: "/tmp/out/a.md" }),
+      okItem(2, { slug: `${base}-bbbb2222`, saved_path: "/tmp/out/b.md" }),
+    ];
+    const names = planGroups(items, 1).map((g) => g.agent_name);
+    expect(new Set(names).size).toBe(2);
+  });
+
+  it("salvaguarda: nomes iguais (inclusive contra web2md-lote-N) ganham -2, -3", () => {
+    const items = [
+      okItem(1, { slug: "dup", saved_path: "/tmp/out/1.md" }),
+      okItem(2, { slug: "dup", saved_path: "/tmp/out/2.md" }),
+      okItem(3, { slug: "dup", saved_path: "/tmp/out/3.md" }),
+    ];
+    expect(planGroups(items, 1).map((g) => g.agent_name)).toEqual(["dup", "dup-2", "dup-3"]);
+    const clash = [
+      ...Array.from({ length: 5 }, (_, i) => okItem(i + 1)),
+      okItem(6, { slug: "web2md-lote-1" }),
+    ];
+    expect(planGroups(clash, 5).map((g) => g.agent_name)).toEqual(["web2md-lote-1", "web2md-lote-1-2"]);
+  });
+
+  it("ignora itens com saved_path repetido, mantendo a primeira ocorrência", () => {
+    const items = [
+      okItem(1, { saved_path: "/tmp/out/same.md" }),
+      okItem(2, { saved_path: "/tmp/out/same.md" }),
+      okItem(3),
+    ];
+    const groups = planGroups(items, 5);
+    expect(groups[0].files.map((f) => f.slug)).toEqual([okItem(1).slug, okItem(3).slug]);
   });
 
   it("agrupa de 5 em 5, com resto, e nomes web2md-lote-N", () => {
@@ -125,6 +164,27 @@ describe("planGroups", () => {
   });
 });
 
+describe("truncateInline", () => {
+  it("devolve o documento inteiro quando cabe", () => {
+    expect(truncateInline("abcde", 5, "/tmp/x.md")).toBe("abcde");
+  });
+
+  it("trunca com marcador e caminho", () => {
+    expect(truncateInline("abcdefghij", 4, "/tmp/x.md")).toBe(
+      "abcd\n\n[Conteúdo truncado: exibidos 4 de 10 caracteres. O documento completo está em /tmp/x.md.]",
+    );
+  });
+
+  it("trunca com marcador sem caminho", () => {
+    expect(truncateInline("abcdefghij", 4, null)).toBe("abcd\n\n[Conteúdo truncado: exibidos 4 de 10 caracteres.]");
+  });
+
+  it("não menciona start_index", () => {
+    expect(truncateInline("abcdefghij", 4, "/tmp/x.md")).not.toContain("start_index");
+    expect(truncateInline("abcdefghij", 4, null)).not.toContain("start_index");
+  });
+});
+
 describe("renderBatchText", () => {
   it("saved: primeira linha, lista com título, chars, caminho e erros", () => {
     const items = [okItem(1), errItem(1)];
@@ -138,6 +198,12 @@ describe("renderBatchText", () => {
     expect(text).toContain(okItem(1).saved_path as string);
     expect(text).toContain("https://bad.test/e1");
     expect(text).toContain("Falha HTTP 501");
+  });
+
+  it("saved: item ok sem saved_path imprime (não salvo), nunca null", () => {
+    const text = renderBatchText(result({ dispatch: "saved", items: [okItem(1, { saved_path: null })] }), []);
+    expect(text).toContain("(não salvo)");
+    expect(text).not.toContain("null");
   });
 
   it("inline: cabeçalho, falhas, documentos sob ## slug e separador, sem alterar o texto", () => {
@@ -171,6 +237,13 @@ describe("renderBatchText", () => {
       expect(text).toContain("Read");
       expect(text).toContain("sem copiar o documento inteiro");
       expect(text).toContain("Se este cliente não suportar subagentes, avise o usuário em vez de ler os arquivos no contexto principal (ou peça para repetir com return_content=false e inline_max_files maior, ciente do custo de contexto).");
+    });
+
+    it("conta os arquivos distintos do plano, não result.succeeded", () => {
+      const dupGroups = planGroups([okItem(1), okItem(2, { saved_path: okItem(1).saved_path }), okItem(3)], 5);
+      const text = renderBatchText(result({ dispatch: "subagents", items: [okItem(1), okItem(2), okItem(3)], groups: dupGroups }), []);
+      expect(text).toContain("São 2 arquivos");
+      expect(text).toContain("3 de 3 URLs");
     });
 
     it("lista cada grupo com agent_name, slug, url e caminho", () => {

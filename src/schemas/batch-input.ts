@@ -1,13 +1,6 @@
 import * as z from "zod/v4";
 import { DEFAULT_FILES_PER_AGENT, DEFAULT_INLINE_MAX_FILES, DEFAULT_MAX_CHARS, MAX_BATCH_URLS } from "../constants.js";
-import { MAX_MAX_CHARS, MIN_MAX_CHARS } from "./input.js";
-
-const httpUrl = z
-  .string()
-  .url()
-  .refine((value) => /^https?:\/\//i.test(value), {
-    message: "A URL deve começar com http:// ou https://",
-  });
+import { httpUrl, MAX_MAX_CHARS, MIN_MAX_CHARS } from "./input.js";
 
 export const BatchInputSchema = z
   .object({
