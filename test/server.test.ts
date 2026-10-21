@@ -133,8 +133,8 @@ describe("servidor MCP (stdio, spec 2026-07-28)", () => {
     const r = await client.request("tools/list");
     expect(r.result!.resultType).toBe("complete");
     const tools = r.result!.tools as Array<Record<string, any>>;
-    expect(tools).toHaveLength(1);
-    const tool = tools[0]!;
+    expect(tools.map((t) => t.name).sort()).toEqual(["web2md_fetch_markdown", "web2md_fetch_markdown_batch"]);
+    const tool = tools.find((t) => t.name === "web2md_fetch_markdown")!;
 
     expect(tool.name).toBe("web2md_fetch_markdown");
     expect(tool.title).toBeTruthy();

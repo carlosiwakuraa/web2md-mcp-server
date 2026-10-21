@@ -4,15 +4,17 @@ import { DEFAULT_MAX_CHARS } from "../constants.js";
 export const MIN_MAX_CHARS = 100;
 export const MAX_MAX_CHARS = 500_000;
 
+/** Validador de URL http(s) compartilhado pela tool de URL única e pela de lote. */
+export const httpUrl = z
+  .string()
+  .url()
+  .refine((value) => /^https?:\/\//i.test(value), {
+    message: "A URL deve começar com http:// ou https://",
+  });
+
 export const InputSchema = z
   .object({
-    url: z
-      .string()
-      .url()
-      .refine((value) => /^https?:\/\//i.test(value), {
-        message: "A URL deve começar com http:// ou https://",
-      })
-      .describe(
+    url: httpUrl.describe(
         "URL absoluta http:// ou https:// da página a converter. Exemplo: https://developer.mozilla.org/en-US/docs/Web/HTML/Element/table",
       ),
     mode: z

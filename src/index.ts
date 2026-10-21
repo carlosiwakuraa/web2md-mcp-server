@@ -4,10 +4,12 @@ import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/server";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
-import { SERVER_NAME, SERVER_VERSION, TOOL_NAME } from "./constants.js";
+import { BATCH_CONCURRENCY, BATCH_DEADLINE_MS, BATCH_TOOL_NAME, DEFAULT_FILES_PER_AGENT, DEFAULT_INLINE_MAX_FILES, MAX_BATCH_URLS, OUTPUT_DIR_ENV, SERVER_NAME, SERVER_VERSION, TOOL_NAME } from "./constants.js";
+import { handleBatch } from "./batch.js";
 import { Web2mdError } from "./errors.js";
 import { saveConversion } from "./output.js";
 import { runPipeline } from "./pipeline.js";
+import { BatchInputSchema, BatchOutputSchema } from "./schemas/batch-input.js";
 import { InputSchema, OutputSchema } from "./schemas/input.js";
 import type { ToolInput } from "./types.js";
 
@@ -25,11 +27,43 @@ Parâmetros:
 
 Retorno: texto Markdown com um frontmatter YAML (url, canonical, title, description, lang, fetched_at, source), seguido do corpo com um único H1. Se o servidor responder com Markdown nativo, ele é devolvido diretamente (source: native-markdown). O structuredContent traz { url, source, total_chars, next_start_index, saved_path }.
 
-Salvamento: toda conversão bem-sucedida é gravada na pasta output/ do projeto (ou em WEB2MD_OUTPUT_DIR, se definida), sempre com o documento completo, independentemente de max_chars/start_index. saved_path traz o caminho absoluto do arquivo (null se a gravação falhar). Reconverter a mesma URL e modo sobrescreve o arquivo.
+Salvamento: toda conversão bem-sucedida é gravada na pasta temporária do sistema em web2md/ (ou em WEB2MD_OUTPUT_DIR, se definida), sempre com o documento completo, independentemente de max_chars/start_index. saved_path traz o caminho absoluto do arquivo (null se a gravação falhar). Reconverter a mesma URL e modo sobrescreve o arquivo.
 
 Paginação: se o documento passar de max_chars, a resposta termina com o marcador "[Conteúdo truncado: exibidos caracteres X–Y de TOTAL. Para continuar, chame novamente com start_index=N]" (e next_start_index no structuredContent). Chame de novo com o mesmo url/mode e start_index=N para ler o restante; o frontmatter só aparece na primeira parte. Um start_index além do fim do documento é um erro.
 
 Erros (isError, com mensagem descritiva): URL inválida; Erro HTTP 4xx/5xx; timeout (30 s); falha de rede; content-type não suportado (só HTML e Markdown; PDFs e imagens não são convertidos); página vazia após a extração (tente mode="full"); página que depende de JavaScript para renderizar (não há execução de JS). Não altera nada no servidor remoto.`;
+
+const BATCH_TOOL_TITLE = "Converter várias páginas web em Markdown (lote)";
+
+const BATCH_TOOL_DESCRIPTION = `Converte várias URLs (até ${MAX_BATCH_URLS}) em Markdown (GFM) numa única chamada, com a mesma conversão da tool ${TOOL_NAME}, e salva cada página em um arquivo .md. Use quando o usuário pedir para ler, comparar ou resumir várias páginas de uma vez.
+
+COMPORTAMENTO POR QUANTIDADE DE ARQUIVOS (campo dispatch na resposta):
+1) return_content=false -> dispatch "saved": tudo é salvo em disco e a resposta traz só o manifesto (url, título, chars, caminho de cada arquivo). Nenhum conteúdo vai ao contexto.
+2) return_content=true (padrão) e até inline_max_files arquivos convertidos (padrão ${DEFAULT_INLINE_MAX_FILES}) -> dispatch "inline": o Markdown de cada página vem no texto da resposta (cada documento limitado por max_chars) e o manifesto no structuredContent.
+3) return_content=true e MAIS que inline_max_files arquivos convertidos -> dispatch "subagents": o conteúdo NÃO vem ao contexto principal. A resposta traz o manifesto e um plano em groups, com files_per_agent arquivos por subagente (padrão ${DEFAULT_FILES_PER_AGENT}; 1 = um subagente por arquivo). Cada grupo tem agent_name e a lista de arquivos (slug, url, saved_path).
+
+REGRA OBRIGATÓRIA ao receber dispatch "subagents": NÃO leia os arquivos .md no contexto principal. Invoque um subagente por grupo (em paralelo, na mesma mensagem) usando o agent_name indicado, repassando o objective da resposta (ou o pedido do usuário, se objective for null) e os saved_path do grupo. Cada subagente deve ler somente os arquivos do seu grupo e devolver uma extração objetiva e curta, não o documento inteiro. Depois, sintetize as extrações para o usuário. Se o cliente não suportar subagentes, avise o usuário em vez de ler os arquivos no contexto principal (ou peça para repetir com return_content=false e inline_max_files maior, ciente do custo de contexto).
+
+Parâmetros:
+- urls (obrigatório): 1 a ${MAX_BATCH_URLS} URLs http:// ou https://. URLs repetidas são convertidas uma única vez (deduplicação); o fragmento "#..." é removido antes de comparar, então URLs que só diferem pelo fragmento contam como uma só.
+- mode: "article" (padrão) extrai só o conteúdo principal; "full" converte o <body> inteiro. Vale para todas as URLs.
+- include_links: se true, anexa "## Links da página" em cada documento. Padrão false.
+- return_content: veja o comportamento acima. Padrão true.
+- inline_max_files: limite de arquivos convertidos que ainda vêm inline (padrão ${DEFAULT_INLINE_MAX_FILES}).
+- files_per_agent: arquivos por subagente no plano (padrão ${DEFAULT_FILES_PER_AGENT}).
+- objective: o que o usuário quer das páginas (ex.: "comparar as opções de autenticação"). Informe sempre que souber: é repassado aos subagentes para guiar a extração.
+- max_chars: só no modo inline, máximo de caracteres de cada documento no contexto (padrão 50000). Um documento maior termina com um marcador que aponta para o arquivo salvo completo; o lote não tem start_index, então para ler o restante leia o saved_path.
+
+Execução: as URLs são buscadas com concorrência ${BATCH_CONCURRENCY}. A falha de uma URL não derruba as demais: cada item do manifesto tem status "ok" ou "error" (com a mensagem). isError só é true quando TODAS as URLs falham. Só arquivos com status "ok" entram no plano de subagentes. Falha ao salvar o arquivo conta como erro daquele item: nenhum item fica "ok" sem arquivo salvo.
+
+Prazo global: o lote tem prazo de ${BATCH_DEADLINE_MS / 1000} s. URLs não concluídas até lá viram erro "Prazo do lote ... esgotado" e o resultado parcial é devolvido; os arquivos já salvos permanecem.
+
+Salvamento: cada página convertida é gravada como <host>_<caminho>-<hash>[.full].md (o slug é o nome sem .md) na pasta temporária do sistema em web2md/ (ou em ${OUTPUT_DIR_ENV}, se definida); output_dir na resposta traz a pasta. O arquivo salvo é sempre o documento completo. URLs que convergem para o mesmo arquivo final (mesmo nome) contam como um só arquivo. Reconverter a mesma URL e modo sobrescreve o arquivo.
+
+Retorno: texto (manifesto, conteúdo inline ou plano de subagentes, conforme dispatch) e structuredContent { dispatch, total, succeeded, failed, output_dir, objective, items, groups }. Não altera nada nos servidores remotos.`;
+
+const SERVER_INSTRUCTIONS = `A tool ${BATCH_TOOL_NAME} converte várias URLs em Markdown. Quando ela responder com dispatch "subagents", o conteúdo das páginas NÃO está no contexto: ele está salvo em arquivos.
+Delegue a leitura aos subagentes conforme o plano em groups (um subagente por grupo, em paralelo, repassando o objective) e não leia esses arquivos no contexto principal.`;
 
 function compactSummary(url: string, title: string | undefined, chars: number, savedPath: string | null): string {
   const lines = ['Conversão concluída.', ''];
@@ -80,7 +114,7 @@ export function errorResult(err: unknown): CallToolResult {
 }
 
 export function createServer(): McpServer {
-  const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
+  const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, { instructions: SERVER_INSTRUCTIONS });
 
   server.registerTool(
     TOOL_NAME,
@@ -99,6 +133,25 @@ export function createServer(): McpServer {
       },
     },
     (args) => handleFetchMarkdown(args),
+  );
+
+  server.registerTool(
+    BATCH_TOOL_NAME,
+    {
+      title: BATCH_TOOL_TITLE,
+      description: BATCH_TOOL_DESCRIPTION,
+      inputSchema: BatchInputSchema,
+      outputSchema: BatchOutputSchema,
+      annotations: {
+        title: BATCH_TOOL_TITLE,
+        // Não altera os servidores remotos, mas grava os Markdown em disco local.
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    (args) => handleBatch(args),
   );
 
   return server;
