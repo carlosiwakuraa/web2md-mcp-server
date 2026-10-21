@@ -170,7 +170,7 @@ describe("renderBatchText", () => {
       expect(text).toContain("Invoque um subagente por grupo abaixo, em paralelo, usando o agent_name indicado.");
       expect(text).toContain("Read");
       expect(text).toContain("sem copiar o documento inteiro");
-      expect(text).toContain("Se este cliente não suportar subagentes, avise o usuário e leia os arquivos sob demanda, um por vez.");
+      expect(text).toContain("Se este cliente não suportar subagentes, avise o usuário em vez de ler os arquivos no contexto principal (ou peça para repetir com return_content=false e inline_max_files maior, ciente do custo de contexto).");
     });
 
     it("lista cada grupo com agent_name, slug, url e caminho", () => {

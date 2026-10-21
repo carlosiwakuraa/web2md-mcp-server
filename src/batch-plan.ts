@@ -77,7 +77,7 @@ function renderSubagents(result: BatchStructured): string {
   }
   const failures = failureLines(result.items);
   if (failures.length > 0) lines.push("", "URLs que falharam:", ...failures);
-  lines.push("", "Se este cliente não suportar subagentes, avise o usuário e leia os arquivos sob demanda, um por vez.");
+  lines.push("", "Se este cliente não suportar subagentes, avise o usuário em vez de ler os arquivos no contexto principal (ou peça para repetir com return_content=false e inline_max_files maior, ciente do custo de contexto).");
   return lines.join("\n");
 }
 
