@@ -14,6 +14,7 @@ export interface ToolInput {
   max_chars: number;
   start_index: number;
   include_links: boolean;
+  return_content: boolean;
 }
 
 // ---------------------------------------------------------------- etapas 1-2

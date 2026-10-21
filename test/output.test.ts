@@ -32,8 +32,8 @@ describe("resolveOutputDir", () => {
     expect(resolveOutputDir({ WEB2MD_OUTPUT_DIR: tmp })).toBe(tmp);
   });
 
-  it("padrão: output/ na raiz do projeto", () => {
-    expect(path.basename(resolveOutputDir({}))).toBe("output");
+  it("padrão: os.tmpdir()/web2md", () => {
+    expect(resolveOutputDir({})).toBe(path.join(tmpdir(), "web2md"));
   });
 });
 
