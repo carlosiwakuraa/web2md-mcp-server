@@ -88,6 +88,11 @@ let client: StdioClient;
 let httpServer: Server;
 let baseUrl: string;
 
+const GUIDE_MD =
+  "# Guia\n\nIntro.\n\n## Instalação\n\n" +
+  Array.from({ length: 12 }, (_, i) => `Passo ${i} da instalação com texto de enchimento.`).join("\n\n") +
+  "\n\n```bash\n# não sou heading\nnpm i\n```\n\n### Requisitos\n\nNode 20.\n\n## Uso\n\nUse assim.\n\n## Uso avançado\n\nOutra coisa.\n";
+
 const NATIVE_MD =
   "# Documento nativo\n\n" +
   Array.from({ length: 30 }, (_, i) => `Parágrafo ${i}: texto de exemplo para paginação.`).join("\n\n") +
@@ -95,7 +100,10 @@ const NATIVE_MD =
 
 beforeAll(async () => {
   httpServer = createServer((req, res) => {
-    if (req.url === "/doc.md") {
+    if (req.url === "/guide.md") {
+      res.writeHead(200, { "content-type": "text/markdown; charset=utf-8" });
+      res.end(GUIDE_MD);
+    } else if (req.url === "/doc.md") {
       res.writeHead(200, { "content-type": "text/markdown; charset=utf-8" });
       res.end(NATIVE_MD);
     } else if (req.url === "/missing") {
@@ -153,9 +161,13 @@ describe("servidor MCP (stdio, spec 2026-07-28)", () => {
     expect(input.required).toEqual(["url"]);
     expect(input.additionalProperties).toBe(false);
     expect(Object.keys(input.properties).sort()).toEqual(
-      ["include_links", "max_chars", "mode", "return_content", "start_index", "url"].sort(),
+      ["include_links", "max_chars", "mode", "return_content", "section", "start_index", "url"].sort(),
     );
-    expect(input.properties.mode.enum).toEqual(["article", "full"]);
+    expect(input.properties.mode.enum).toEqual(["article", "full", "outline"]);
+    expect(input.properties.section.type).toBe("string");
+    expect(input.required).toEqual(["url"]);
+    expect(tool.description).toContain("outline");
+    expect(tool.description).toContain("section");
     expect(input.properties.mode.default).toBe("article");
     expect(input.properties.max_chars.default).toBe(50000);
     expect(input.properties.start_index.default).toBe(0);
@@ -168,7 +180,7 @@ describe("servidor MCP (stdio, spec 2026-07-28)", () => {
 
     expect(tool.outputSchema.type).toBe("object");
     expect(Object.keys(tool.outputSchema.properties).sort()).toEqual(
-      ["next_start_index", "saved_path", "source", "total_chars", "url"].sort(),
+      ["document_chars", "headings", "next_start_index", "saved_path", "section", "source", "total_chars", "url"].sort(),
     );
   });
 
@@ -292,6 +304,92 @@ describe("servidor MCP (stdio, spec 2026-07-28)", () => {
     const text: string = r.result!.content[0].text;
     expect(text.startsWith(`---\nurl: ${url}\n`)).toBe(true);
     expect(text).toContain("source: native-markdown");
+  });
+
+  it("mode=outline: índice com offsets, headings estruturados e arquivo salvo completo (mesmo arquivo de article)", async () => {
+    const url = `${baseUrl}/guide.md`;
+    const r = await client.callTool({ url, mode: "outline" });
+    expect(r.result!.isError).toBeFalsy();
+    const text: string = r.result!.content[0].text;
+    expect(text.startsWith(`---\nurl: ${url}\n`)).toBe(true);
+    expect(text).toContain("mode: outline");
+    expect(text).toContain("slug: `instalacao`");
+    expect(text).not.toContain("Passo 3 da instalação");
+
+    const sc = r.result!.structuredContent;
+    expect(sc.next_start_index).toBeNull();
+    expect(sc.section).toBeNull();
+    expect(sc.headings.map((h: any) => h.slug)).toEqual(["guia", "instalacao", "requisitos", "uso", "uso-avancado"]);
+    expect(sc.headings[0]).toMatchObject({ heading: "Guia", level: 1, id: null });
+
+    const saved = readFileSync(sc.saved_path, "utf8");
+    expect(saved.length).toBe(sc.total_chars);
+    expect(saved.length).toBe(sc.document_chars);
+    expect(saved).toContain("Passo 3 da instalação");
+    expect(saved).not.toContain("mode: outline");
+    const inst = sc.headings.find((h: any) => h.slug === "instalacao");
+    expect(saved.slice(inst.start, inst.end).startsWith("## Instalação")).toBe(true);
+    expect(saved.slice(inst.start, inst.end)).toContain("### Requisitos");
+    expect(path.basename(sc.saved_path)).toMatch(/^127\.0\.0\.1_guide\.md-[0-9a-f]{8}\.md$/);
+  });
+
+  it("section por slug, por texto e por fragmento da URL; a seção inclui subseções e bloco de código inteiro", async () => {
+    const url = `${baseUrl}/guide.md`;
+    const bySlug = await client.callTool({ url, section: "instalacao" });
+    const text: string = bySlug.result!.content[0].text;
+    expect(text).toContain("section: Instalação\nsection_slug: instalacao\n---");
+    expect(text).toContain("# não sou heading\nnpm i\n```");
+    expect(text).toContain("### Requisitos");
+    expect(text).not.toContain("## Uso");
+    const sc = bySlug.result!.structuredContent;
+    expect(sc.section).toMatchObject({ heading: "Instalação", level: 2, slug: "instalacao" });
+    expect(sc.total_chars).toBe(text.length);
+    expect(sc.document_chars).toBeGreaterThan(sc.total_chars);
+    expect(sc.headings).toBeNull();
+
+    const byText = await client.callTool({ url, section: "USO AVANCADO" });
+    expect(byText.result!.structuredContent.section.slug).toBe("uso-avancado");
+
+    const byFragment = await client.callTool({ url: `${url}#requisitos` });
+    expect(byFragment.result!.structuredContent.section.slug).toBe("requisitos");
+    expect(byFragment.result!.content[0].text).toContain("Node 20.");
+
+    const missFragment = await client.callTool({ url: `${url}#nao-existe` });
+    expect(missFragment.result!.isError).toBeFalsy();
+    expect(missFragment.result!.structuredContent.section).toBeNull();
+    expect(missFragment.result!.content[0].text).toContain("Intro.");
+  });
+
+  it("section com paginação (max_chars/start_index) e com return_content=false", async () => {
+    const url = `${baseUrl}/guide.md`;
+    const first = await client.callTool({ url, section: "instalacao", max_chars: 300 });
+    const sc = first.result!.structuredContent;
+    expect(sc.next_start_index).not.toBeNull();
+    expect(first.result!.content[0].text).toContain(`start_index=${sc.next_start_index}]`);
+    expect(first.result!.content[0].text).toContain("section: Instalação");
+
+    const second = await client.callTool({ url, section: "instalacao", max_chars: 300, start_index: sc.next_start_index });
+    expect(second.result!.isError).toBeFalsy();
+    expect(second.result!.content[0].text.startsWith("---")).toBe(false);
+
+    const meta = await client.callTool({ url, section: "instalacao", return_content: false });
+    const msc = meta.result!.structuredContent;
+    expect(meta.result!.content[0].text).toContain("section: instalacao");
+    expect(msc.total_chars).toBe(msc.document_chars);
+    expect(readFileSync(msc.saved_path, "utf8").length).toBe(msc.document_chars);
+  });
+
+  it("section ambígua ou inexistente devolve isError em português listando headings", async () => {
+    const url = `${baseUrl}/guide.md`;
+    const amb = await client.callTool({ url, section: "us" });
+    expect(amb.result!.isError).toBe(true);
+    expect(amb.result!.content[0].text).toContain("ambígua");
+    expect(amb.result!.content[0].text).toContain("uso-avancado");
+
+    const none = await client.callTool({ url, section: "capítulo inexistente" });
+    expect(none.result!.isError).toBe(true);
+    expect(none.result!.content[0].text).toContain("não encontrada");
+    expect(none.result!.content[0].text).toContain("instalacao");
   });
 
   it("nada além do protocolo vai para stdout; logs ficam em stderr", () => {

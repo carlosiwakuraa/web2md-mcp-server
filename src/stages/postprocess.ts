@@ -9,12 +9,12 @@ const FENCE_RE = /^\s*(`{3,}|~{3,})(.*)$/;
  * Estado de uma cerca de código (``` ou ~~~) enquanto percorremos as linhas.
  * Devolve o novo estado depois de consumir `line`.
  */
-interface FenceState {
+export interface FenceState {
   char: string;
   len: number;
 }
 
-function nextFenceState(line: string, state: FenceState | null): FenceState | null {
+export function nextFenceState(line: string, state: FenceState | null): FenceState | null {
   const m = FENCE_RE.exec(line);
   if (!state) {
     if (!m) return null;
@@ -222,6 +222,9 @@ export function renderDocument(fm: Frontmatter, body: string): string {
     ["lang", fm.lang],
     ["fetched_at", fm.fetched_at],
     ["source", fm.source],
+    ["mode", fm.mode],
+    ["section", fm.section],
+    ["section_slug", fm.section_slug],
   ];
   const lines = fields
     .filter((f): f is [string, string] => f[1] !== undefined && f[1] !== "")

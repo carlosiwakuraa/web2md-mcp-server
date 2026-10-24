@@ -7,7 +7,9 @@ export type ErrorCode =
   | "UNSUPPORTED_CONTENT_TYPE"
   | "EMPTY_CONTENT"
   | "JS_REQUIRED"
-  | "INVALID_ARGUMENT";
+  | "INVALID_ARGUMENT"
+  | "SECTION_NOT_FOUND"
+  | "SECTION_AMBIGUOUS";
 
 /** Erro com mensagem já pronta para o Claude (seção 6 da spec). */
 export class Web2mdError extends Error {
@@ -75,4 +77,7 @@ export const errors = {
       `A página ${url} provavelmente depende de JavaScript para renderizar o conteúdo (pouco texto e muitos <script>). Esta versão não executa JavaScript.`,
     ),
   invalidArgument: (detail: string) => new Web2mdError("INVALID_ARGUMENT", detail),
+  /** `message` já vem pronta (lista os headings disponíveis); ver stages/outline.ts. */
+  sectionNotFound: (message: string) => new Web2mdError("SECTION_NOT_FOUND", message),
+  sectionAmbiguous: (message: string) => new Web2mdError("SECTION_AMBIGUOUS", message),
 };

@@ -1,6 +1,6 @@
 /** Tipos compartilhados da tool de lote (v1.2). */
 import type * as z from "zod/v4";
-import type { runPipeline } from "./pipeline.js";
+import type { PipelineResult as FullPipelineResult } from "./pipeline.js";
 import type { BatchGroupSchema, BatchItemSchema, BatchOutputSchema } from "./schemas/batch-input.js";
 import type { Mode, ToolInput } from "./types.js";
 
@@ -16,7 +16,7 @@ export interface InlineDoc {
   text: string;
 }
 
-export type PipelineResult = Awaited<ReturnType<typeof runPipeline>>;
+export type PipelineResult = FullPipelineResult;
 
 export interface BatchDeps {
   /** Padrão: runPipeline com timeout limitado ao tempo restante do prazo do lote. */

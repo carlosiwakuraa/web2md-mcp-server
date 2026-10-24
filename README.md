@@ -125,12 +125,13 @@ Não há retry para 4xx definitivos (404, 403 etc.), outros 5xx (como 500), time
 | Parâmetro | Tipo | Padrão | Descrição |
 |---|---|---|---|
 | `url` | string | obrigatório | URL `http://` ou `https://` da página. |
-| `mode` | `"article"` \| `"full"` | `"article"` | `article` extrai só o conteúdo principal (sem menu, rodapé e barra lateral). `full` converte o `<body>` inteiro; use quando a extração errar o conteúdo. |
+| `mode` | `"article"` \| `"full"` \| `"outline"` | `"article"` | `article` extrai só o conteúdo principal (sem menu, rodapé e barra lateral). `full` converte o `<body>` inteiro; use quando a extração errar o conteúdo. `outline` converte como `article`, mas devolve só o índice de headings (veja [Outline e seções](#outline-e-seções)). |
 | `max_chars` | inteiro (100–500000) | `50000` | Limite de caracteres por resposta. |
 | `start_index` | inteiro ≥ 0 | `0` | Posição do documento onde a resposta começa, para paginar. |
 | `include_links` | booleano | `false` | Anexa a seção `## Links da página` com os links do conteúdo. |
+| `section` | string | — | Devolve só uma seção do documento: slug, texto ou id do heading. Sem ele, o `#fragmento` da URL é usado se casar com um heading. Veja [Outline e seções](#outline-e-seções). |
 
-Além do texto, a resposta traz `structuredContent` com `{ url, source, total_chars, next_start_index, saved_path }`.
+Além do texto, a resposta traz `structuredContent` com `{ url, source, total_chars, document_chars, next_start_index, saved_path, section, headings }` (`section` e `headings` são `null` fora de `section`/`outline`).
 
 ### Pasta de saída
 
@@ -151,6 +152,34 @@ Quando o documento passa de `max_chars`, a resposta termina com um marcador:
 ```
 
 Chame a tool de novo com o mesmo `url` e `start_index=49812`. O frontmatter aparece só na primeira parte. Um `start_index` além do fim do documento devolve erro.
+
+## Outline e seções
+
+Para páginas longas, evite trazer o documento inteiro: peça o índice e depois só a seção que interessa.
+
+1. `mode: "outline"` converte a página como `article` e devolve só o frontmatter (com `mode: outline`) e uma lista hierárquica dos headings. Cada item traz o nível, o texto, o **slug** estável e o offset inicial–final e o tamanho da seção:
+
+   ```
+   - Instalação (h2) — slug: `instalacao` — offset 412–2380 (1968 caracteres)
+     - Requisitos (h3) — slug: `requisitos` — offset 1790–2380 (590 caracteres)
+   ```
+
+   O `structuredContent` traz a mesma lista em `headings` (`{ heading, level, slug, id, start, end, chars }`) e `total_chars` com o tamanho do documento completo. Os offsets são posições de caracteres no **documento completo salvo em disco** (frontmatter incluído), então valem também para ler o arquivo em `saved_path` por intervalo. O índice não é paginado (`max_chars` e `start_index` não se aplicam).
+2. `section: "<slug>"` devolve só aquela seção.
+
+Regras de `section`:
+
+- **O que casa**, nesta ordem: slug (ou id HTML) exato; texto do heading exato, sem diferenciar maiúsculas nem acentos; prefixo do texto/slug; trecho contido. Prefixo e trecho só valem se casarem com um único heading. Uma correspondência exata vence prefixos (`API` não é ambíguo com `API REST`).
+- **Slugs**: texto em minúsculas, sem acentos, com hífens (`Instalação e uso` vira `instalacao-e-uso`). Headings repetidos ganham sufixo na ordem em que aparecem (`exemplo`, `exemplo-1`, `exemplo-2`); heading sem texto aproveitável vira `secao`.
+- **Fragmento da URL**: sem `section`, `https://site/pagina#instalacao` seleciona o heading cujo id HTML ou slug seja `instalacao`. Se nada casar, o fragmento é ignorado em silêncio e a página inteira é devolvida. No modo `outline` o fragmento é ignorado.
+- **Extensão da seção**: o heading e tudo até o próximo heading de nível igual ou menor (as subseções entram). Headings ATX (`##`) e setext (`===`/`---`) são reconhecidos; `#` dentro de blocos de código cercados é ignorado, então um bloco nunca é cortado ao meio.
+- **Frontmatter e paginação**: o frontmatter é mantido e ganha `section` e `section_slug`. `max_chars` e `start_index` paginam dentro da seção, e `total_chars`/`next_start_index` se referem a ela; `document_chars` traz o tamanho do documento completo e `section` no `structuredContent` descreve o heading escolhido. Funciona junto com `include_links` (a seção de links é uma seção própria, `links-da-pagina`).
+- **Erros**: seção inexistente ou ambígua devolve `isError` com uma mensagem em português listando até 10 headings (slug, texto e nível).
+- `outline` junto de `section` restringe o índice àquela seção e às suas subseções.
+
+O arquivo salvo continua sendo sempre o documento completo. `outline` grava no mesmo arquivo do modo `article` (mesma URL, mesmo conteúdo), então não há colisão nem arquivo extra.
+
+A tool de lote não tem `outline` nem `section`: ela trabalha com documentos inteiros (e descarta o `#fragmento` das URLs). Para índice ou seção de várias páginas, chame a tool de URL única para cada uma.
 
 ## Conversão em lote (v1.2.0)
 
@@ -246,6 +275,7 @@ Os erros voltam como resultado com `isError: true` e uma mensagem que o Claude c
 - Página vazia após a extração, com a sugestão de usar `mode="full"`.
 - Página que provavelmente depende de JavaScript (pouco texto e muitos `<script>`).
 - `start_index` fora do documento.
+- `section` inexistente ou ambígua (a mensagem lista os headings disponíveis).
 
 Os logs vão para `stderr`; o `stdout` carrega só o protocolo.
 
