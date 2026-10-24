@@ -6,6 +6,13 @@ A tool exposta se chama `web2md_fetch_markdown`. Ela não altera o servidor remo
 
 Desde a v1.2.0 há também a tool `web2md_fetch_markdown_batch`, que converte várias URLs de uma vez (ver [Conversão em lote](#conversão-em-lote-v120)).
 
+## Novidades da v1.3.0
+
+- **Proxy corporativo:** respeita `HTTPS_PROXY`, `HTTP_PROXY` e `NO_PROXY` (ver [Configuração de rede](#configuração-de-rede)).
+- **Retry com backoff:** repete 429, 502, 503, 504 e erros de rede transitórios, respeitando `Retry-After`.
+- **`mode: "outline"` e `section`:** devolvem só o índice de headings ou só uma seção, para gastar menos contexto.
+- **Distribuição:** pacote npm (`npx -y web2md-mcp-server`) e bundle `.mcpb` para o Claude Desktop.
+
 ## Novidades da v1.2.0
 
 - Nova tool `web2md_fetch_markdown_batch`: converte de 1 a 20 URLs em Markdown em uma só chamada.
