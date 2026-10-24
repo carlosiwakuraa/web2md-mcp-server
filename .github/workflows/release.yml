@@ -1,0 +1,50 @@
+name: Release
+
+# Ao empurrar uma tag v* (ex.: v1.3.0): build + testes, gera o .mcpb,
+# cria o GitHub Release com o bundle anexado e publica no npm com provenance.
+# Requer o secret NPM_TOKEN (token de automação do npm com permissão de publicar).
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # criar o GitHub Release
+  id-token: write # provenance do npm
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Conferir que a tag bate com a versão do package.json
+        run: |
+          PKG="v$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_REF_NAME" != "$PKG" ]; then
+            echo "A tag $GITHUB_REF_NAME não bate com package.json ($PKG)" >&2
+            exit 1
+          fi
+
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+
+      - name: Gerar o bundle .mcpb
+        run: npm run mcpb:pack
+
+      - name: Criar o GitHub Release com o .mcpb
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "$GITHUB_REF_NAME" web2md.mcpb --title "$GITHUB_REF_NAME" --generate-notes
+
+      - name: Publicar no npm (com provenance)
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

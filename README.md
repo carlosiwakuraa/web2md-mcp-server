@@ -15,34 +15,59 @@ Desde a v1.2.0 há também a tool `web2md_fetch_markdown_batch`, que converte v�
 
 ## Instalação
 
+Requer Node 20 ou superior (o bundle .mcpb usa o Node embutido no Claude Desktop).
+
+### Claude Desktop (bundle .mcpb)
+
+1. Baixe o `web2md.mcpb` da [página de releases](https://github.com/carlosiwakuraa/web2md-mcp-server/releases/latest).
+2. Dê um duplo clique no arquivo (ou arraste-o para **Configurações > Extensões**) e confirme a instalação.
+3. Opcional: na tela da extensão, defina a **Pasta de saída** (`WEB2MD_OUTPUT_DIR`) e o **Proxy HTTPS**.
+
+### Claude Code (npx)
+
 ```bash
-npm install && npm run build
+claude mcp add web2md -- npx -y web2md-mcp-server
 ```
 
-Requer Node 20 ou superior. O build gera `dist/index.js`.
+### Claude Desktop e VS Code com npx
 
-### Claude Code
-
-```bash
-claude mcp add web2md -- node /caminho/para/web2md/dist/index.js
-```
-
-### Claude Desktop
-
-Em `claude_desktop_config.json`:
+Sem o bundle, adicione o servidor na configuração. No Claude Desktop, em `claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "web2md": {
-      "command": "node",
-      "args": ["/caminho/para/web2md/dist/index.js"]
+      "command": "npx",
+      "args": ["-y", "web2md-mcp-server"]
     }
   }
 }
 ```
 
-Em desenvolvimento, use `npm run dev` (roda `src/index.ts` com `tsx`).
+No VS Code, em `.vscode/mcp.json` (a chave raiz é `servers`):
+
+```json
+{
+  "servers": {
+    "web2md": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "web2md-mcp-server"]
+    }
+  }
+}
+```
+
+### A partir do código-fonte
+
+```bash
+git clone https://github.com/carlosiwakuraa/web2md-mcp-server.git
+cd web2md-mcp-server
+npm install && npm run build
+claude mcp add web2md -- node "$(pwd)/dist/index.js"
+```
+
+Em desenvolvimento, use `npm run dev` (roda `src/index.ts` com `tsx`). Para gerar o bundle localmente: `npm run mcpb:pack` (cria `web2md.mcpb`).
 
 ## Configuração de rede
 
@@ -243,6 +268,19 @@ O texto da resposta muda conforme o `dispatch` (manifesto, documentos inline ou 
 - **Prazo global de 50 s:** URLs não concluídas até lá viram erro `Prazo do lote ... esgotado` e o resultado parcial é devolvido; os arquivos já salvos permanecem.
 - **Nomes de arquivo:** iguais aos da tool de URL única (`<host>_<caminho>-<hash>.md`, com `.full` em `mode="full"`). O `slug` de cada item é o nome do arquivo sem `.md` e serve de identificador, inclusive como nome do subagente.
 - **Pasta de saída:** a mesma da tool de URL única; para trocar, defina `WEB2MD_OUTPUT_DIR`. O arquivo salvo contém sempre o documento completo, independentemente de `max_chars`.
+
+## Publicação
+
+Passo a passo para mantenedores (a versão fica em `package.json`, `manifest.json`, `server.json` e `SERVER_VERSION` em `src/constants.ts`):
+
+1. Atualize a versão nesses quatro lugares, rode `npm install --package-lock-only` e confira `npm run build && npm test`.
+2. Faça o commit e crie a tag: `git tag v1.3.0 && git push origin master v1.3.0`.
+3. O workflow `.github/workflows/release.yml` roda build e testes, gera o `web2md.mcpb`, cria o GitHub Release com o bundle anexado e publica no npm com provenance. Ele precisa do secret `NPM_TOKEN` (token de automação do npm) no repositório.
+4. Publicação manual, se preferir: `npm login` e `npm publish` (o `prepublishOnly` limpa, compila e testa; `publishConfig.access` já é `public`).
+
+### MCP Registry (próximo passo)
+
+O repositório já tem o `server.json` e o `mcpName` (`io.github.carlosiwakuraa/web2md-mcp-server`) no `package.json`. Depois que a versão estiver no npm: instale o `mcp-publisher`, rode `mcp-publisher login github` e `mcp-publisher publish` na raiz do repositório.
 
 ## Exemplo de saída
 
