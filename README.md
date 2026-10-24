@@ -85,6 +85,41 @@ Em ambientes com certificados CA próprios (bancos, empresas, VPNs), as requisi�
 
 > `--use-system-ca` requer Node.js 22 ou superior. Em versões anteriores, use `NODE_EXTRA_CA_CERTS=/caminho/para/ca-bundle.pem` apontando para o arquivo `.pem` com os certificados da sua organização.
 
+### Proxy
+
+O servidor respeita as variáveis de ambiente de proxy padrão. Defina-as via `env` no seu cliente MCP, como no exemplo dos certificados acima:
+
+| Variável | Uso |
+| --- | --- |
+| `HTTPS_PROXY` / `https_proxy` | Proxy para URLs `https://` |
+| `HTTP_PROXY` / `http_proxy` | Proxy para URLs `http://` |
+| `NO_PROXY` / `no_proxy` | Destinos que devem ir direto, sem proxy |
+
+```json
+"env": {
+  "HTTPS_PROXY": "http://usuario:senha@proxy.empresa.com:3128",
+  "NO_PROXY": "localhost,127.0.0.1,.intranet.empresa.com"
+}
+```
+
+- **Escolha por esquema.** URLs `https://` usam só `HTTPS_PROXY` e URLs `http://` usam só `HTTP_PROXY`. Se existirem as duas grafias de uma variável, a minúscula vence. Valor vazio ou só com espaços conta como não definido; sem nenhuma variável de proxy, o comportamento é o mesmo de antes.
+- **Formato do proxy.** `http://host:porta` ou `https://host:porta`; o esquema pode ser omitido (`proxy:3128` vira `http://proxy:3128`). Credenciais na URL (`usuario:senha@`) são enviadas ao proxy como `Proxy-Authorization: Basic`. Use `%40`, `%3A` etc. para caracteres especiais na senha.
+- **`NO_PROXY`.** Lista separada por vírgulas ou espaços. Aceita `*` (nunca usar proxy), nomes de host (`exemplo.com`, que também cobre `api.exemplo.com`), sufixos com ponto ou curinga (`.exemplo.com`, `*.exemplo.com`), `host:porta` (`interno.local:8080`) e IPs (`127.0.0.1`, `[::1]`). Intervalos CIDR não são suportados.
+- **Redirects** são decididos a cada salto: um redirect para um host em `NO_PROXY` vai direto, e um de `http` para `https` passa a usar `HTTPS_PROXY`.
+- **Erros.** Se o proxy estiver inacessível, exigir autenticação (407) ou recusar o destino, a mensagem diz isso em português (código `PROXY_ERROR`). Usuário e senha do proxy nunca aparecem em mensagens de erro nem em logs; só `host:porta`.
+- **TLS.** Proxies que interceptam HTTPS (certificado próprio) exigem a CA da empresa, como descrito em "Certificados CA corporativos". Para o fetch via proxy valem as mesmas variáveis `NODE_EXTRA_CA_CERTS` / `NODE_OPTIONS=--use-system-ca`.
+
+### Retry
+
+Falhas transitórias são repetidas automaticamente, até **2 vezes** (3 tentativas no total):
+
+- **HTTP** 429, 502, 503 e 504;
+- **Erros de rede** transitórios: `ECONNRESET`, `ETIMEDOUT`, `EAI_AGAIN` e `UND_ERR_SOCKET`.
+
+A espera segue backoff exponencial com jitter (base de 500 ms: cerca de 0,25–0,5 s antes da 2ª tentativa e 0,5–1 s antes da 3ª). Se o servidor enviar `Retry-After` (em segundos ou como data HTTP), ele é usado no lugar do backoff, limitado a 10 s.
+
+Não há retry para 4xx definitivos (404, 403 etc.), outros 5xx (como 500), timeout, conteúdo não suportado nem resposta acima do limite de tamanho. O tempo limite é **total**, somando todas as tentativas e esperas: se a próxima espera não couber no tempo restante (por exemplo, no prazo global de uma conversão em lote), a falha original é devolvida sem nova tentativa. Em caso de esgotamento, a mensagem de erro é a da última tentativa.
+
 ## Parâmetros
 
 | Parâmetro | Tipo | Padrão | Descrição |

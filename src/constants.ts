@@ -27,3 +27,14 @@ export const DEFAULT_INLINE_MAX_FILES = 3;
 export const DEFAULT_FILES_PER_AGENT = 5;
 /** Prazo global do lote: abaixo do timeout típico (60 s) dos clientes MCP. URLs não concluídas viram erro. */
 export const BATCH_DEADLINE_MS = 50_000;
+
+/** Retry (v1.3): tentativas extras após a primeira (3 tentativas no total). */
+export const RETRY_MAX_RETRIES = 2;
+/** Base do backoff exponencial (500 ms, 1 s, ...), com jitter. */
+export const RETRY_BASE_DELAY_MS = 500;
+/** Teto de espera entre tentativas, inclusive quando vem de Retry-After. */
+export const RETRY_MAX_DELAY_MS = 10_000;
+/** Status HTTP que valem nova tentativa. */
+export const RETRY_STATUS_CODES: readonly number[] = [429, 502, 503, 504];
+/** Códigos de erro de rede transitórios que valem nova tentativa. */
+export const RETRY_NETWORK_CODES: readonly string[] = ["ECONNRESET", "ETIMEDOUT", "EAI_AGAIN", "UND_ERR_SOCKET"];

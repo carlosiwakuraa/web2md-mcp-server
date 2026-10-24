@@ -3,6 +3,7 @@ export type ErrorCode =
   | "HTTP_ERROR"
   | "TIMEOUT"
   | "NETWORK_ERROR"
+  | "PROXY_ERROR"
   | "UNSUPPORTED_CONTENT_TYPE"
   | "EMPTY_CONTENT"
   | "JS_REQUIRED"
@@ -34,6 +35,28 @@ export const errors = {
     ),
   network: (url: string, detail: string) =>
     new Web2mdError("NETWORK_ERROR", `Falha de rede ao acessar ${url}: ${detail}`),
+  /** `proxy` é sempre o rótulo "host:porta", nunca a URL completa (pode ter credenciais). */
+  proxyConnect: (proxy: string, url: string, detail: string) =>
+    new Web2mdError(
+      "PROXY_ERROR",
+      `Falha ao conectar ao proxy ${proxy} ao acessar ${url}: ${detail}. Verifique HTTPS_PROXY/HTTP_PROXY e se o proxy está acessível.`,
+    ),
+  proxyAuth: (proxy: string, url: string) =>
+    new Web2mdError(
+      "PROXY_ERROR",
+      `O proxy ${proxy} exige autenticação (HTTP 407) ao acessar ${url}. Informe usuário e senha na URL do proxy (http://usuario:senha@host:porta) ou confira as credenciais.`,
+    ),
+  proxyRefused: (proxy: string, url: string, status: number) =>
+    new Web2mdError(
+      "PROXY_ERROR",
+      `O proxy ${proxy} recusou a conexão com ${url} (HTTP ${status}). O destino pode estar bloqueado pelo proxy ou fora do ar.`,
+    ),
+  /** `varName` é o nome da variável de ambiente; o valor nunca entra na mensagem. */
+  proxyConfig: (varName: string) =>
+    new Web2mdError(
+      "PROXY_ERROR",
+      `Configuração de proxy inválida em ${varName}. Use o formato http://host:porta (ou http://usuario:senha@host:porta).`,
+    ),
   unsupportedContentType: (contentType: string, url: string) =>
     new Web2mdError(
       "UNSUPPORTED_CONTENT_TYPE",

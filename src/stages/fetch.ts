@@ -1,8 +1,27 @@
 import { detect as detectCharset } from "chardet";
 import iconv from "iconv-lite";
-import { ACCEPT_HEADER, FETCH_TIMEOUT_MS, MAX_BODY_BYTES, USER_AGENT } from "../constants.js";
+import { fetch as undiciFetch, type Dispatcher } from "undici";
+import {
+  ACCEPT_HEADER,
+  FETCH_TIMEOUT_MS,
+  MAX_BODY_BYTES,
+  RETRY_BASE_DELAY_MS,
+  RETRY_MAX_DELAY_MS,
+  RETRY_MAX_RETRIES,
+  RETRY_NETWORK_CODES,
+  RETRY_STATUS_CODES,
+  USER_AGENT,
+} from "../constants.js";
 import { errors, Web2mdError } from "../errors.js";
 import type { FetchOptions, FetchResult } from "../types.js";
+import {
+  getProxyDispatcher,
+  readProxyEnv,
+  redactSecrets,
+  selectProxy,
+  type ProxyChoice,
+  type ProxyEnv,
+} from "./proxy.js";
 
 // ------------------------------------------------------------ regras por domínio
 
@@ -49,10 +68,32 @@ class HttpFailure extends Web2mdError {
   constructor(
     readonly status: number,
     url: string,
+    /** Espera pedida pelo servidor via Retry-After, em ms (sem teto aplicado). */
+    readonly retryAfterMs?: number,
   ) {
     const base = errors.http(status, url);
     super(base.code, base.message);
   }
+}
+
+/** Falha de rede/proxy, marcando se vale nova tentativa. */
+class NetworkFailure extends Web2mdError {
+  constructor(
+    base: Web2mdError,
+    readonly transient: boolean,
+  ) {
+    super(base.code, base.message);
+  }
+}
+
+/** Retry-After em segundos ou data HTTP -> ms (>= 0); undefined se ausente/inválido. */
+export function parseRetryAfter(header: string | null | undefined, nowMs: number): number | undefined {
+  const value = header?.trim();
+  if (!value) return undefined;
+  if (/^\d+(\.\d+)?$/.test(value)) return Math.round(Number(value) * 1000);
+  const date = Date.parse(value);
+  if (Number.isNaN(date)) return undefined;
+  return Math.max(0, date - nowMs);
 }
 
 function parseUrl(raw: string): URL {
@@ -77,7 +118,42 @@ function parseContentType(header: string | null): { type: string; charset?: stri
   return { type: (typePart ?? "").trim().toLowerCase(), charset };
 }
 
-function mapError(err: unknown, url: string, timeoutMs: number): Web2mdError {
+/** Todos os `code` na cadeia de causas (inclui AggregateError). */
+function collectCodes(err: unknown, depth = 0, out: string[] = []): string[] {
+  if (!err || typeof err !== "object" || depth > 5) return out;
+  const e = err as { code?: unknown; cause?: unknown; errors?: unknown };
+  if (typeof e.code === "string") out.push(e.code);
+  collectCodes(e.cause, depth + 1, out);
+  if (Array.isArray(e.errors)) for (const sub of e.errors) collectCodes(sub, depth + 1, out);
+  return out;
+}
+
+function collectMessages(err: unknown, depth = 0, out: string[] = []): string[] {
+  if (!err || typeof err !== "object" || depth > 5) return out;
+  const e = err as { message?: unknown; cause?: unknown };
+  if (typeof e.message === "string") out.push(e.message);
+  collectMessages(e.cause, depth + 1, out);
+  return out;
+}
+
+/** Códigos que, com proxy em uso, indicam falha ao alcançar o próprio proxy. */
+const PROXY_CONNECT_CODES = new Set([
+  "ECONNREFUSED",
+  "ENOTFOUND",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "EAI_AGAIN",
+  "ETIMEDOUT",
+  "UND_ERR_CONNECT_TIMEOUT",
+]);
+
+function mapError(
+  err: unknown,
+  url: string,
+  timeoutMs: number,
+  proxy: ProxyChoice | null,
+  proxyEnv: ProxyEnv,
+): Web2mdError {
   if (err instanceof Web2mdError) return err;
   const e = err as { name?: string; message?: string; cause?: unknown } | null;
   if (e && (e.name === "TimeoutError" || e.name === "AbortError")) {
@@ -87,8 +163,30 @@ function mapError(err: unknown, url: string, timeoutMs: number): Web2mdError {
   if (cause && (cause.name === "TimeoutError" || cause.name === "AbortError")) {
     return errors.timeout(url, timeoutMs);
   }
-  const detail = cause?.code ?? cause?.message ?? e?.message ?? String(err);
-  return errors.network(url, detail);
+
+  const codes = collectCodes(err);
+  const transient = codes.some((c) => RETRY_NETWORK_CODES.includes(c));
+  // `code` de DOMException é numérico; só usamos códigos textuais (ex.: ECONNRESET).
+  const causeCode = typeof cause?.code === "string" ? cause.code : undefined;
+  const detail = redactSecrets(String(causeCode ?? cause?.message ?? e?.message ?? String(err)), proxyEnv);
+
+  if (proxy) {
+    const text = collectMessages(err).join(" | ");
+    const tunnel = /Proxy response \((\d{3})\)/.exec(text);
+    if (tunnel || /Proxy Authentication Required/i.test(text)) {
+      const status = tunnel ? Number(tunnel[1]) : 407;
+      if (status === 407) return new NetworkFailure(errors.proxyAuth(proxy.label, url), false);
+      return new NetworkFailure(
+        errors.proxyRefused(proxy.label, url, status),
+        RETRY_STATUS_CODES.includes(status),
+      );
+    }
+    if (codes.some((c) => PROXY_CONNECT_CODES.has(c))) {
+      return new NetworkFailure(errors.proxyConnect(proxy.label, url, detail), transient);
+    }
+  }
+
+  return new NetworkFailure(errors.network(url, detail), transient);
 }
 
 /** Lê o corpo como stream, abortando se passar de MAX_BODY_BYTES. */
@@ -203,24 +301,39 @@ function looksLikeHtml(buf: Buffer): boolean {
 
 // --------------------------------------------------------------------- fetch único
 
-async function fetchOnce(
-  target: URL,
-  fetchImpl: typeof fetch,
-  timeoutMs: number,
-): Promise<FetchResult> {
+/** Contexto compartilhado pelas tentativas de uma chamada a fetchPage. */
+interface FetchContext {
+  fetchImpl: typeof fetch;
+  dispatcher: Dispatcher | undefined;
+  proxyEnv: ProxyEnv;
+  /** Orçamento total (para a mensagem de timeout). */
+  totalMs: number;
+  /** Instante (Date.now) em que o orçamento acaba. */
+  deadline: number;
+  now: () => number;
+  sleep: (ms: number) => Promise<void>;
+  random: () => number;
+}
+
+async function fetchOnce(target: URL, ctx: FetchContext, timeoutMs: number): Promise<FetchResult> {
   const url = target.href;
+  let proxy: ProxyChoice | null = null;
   try {
-    const res = await fetchImpl(url, {
+    proxy = selectProxy(target, ctx.proxyEnv);
+    const init: RequestInit & { dispatcher?: Dispatcher } = {
       method: "GET",
       redirect: "follow",
       headers: { Accept: ACCEPT_HEADER, "User-Agent": USER_AGENT },
       signal: AbortSignal.timeout(timeoutMs),
-    });
+    };
+    if (ctx.dispatcher) init.dispatcher = ctx.dispatcher;
+    const res = await ctx.fetchImpl(url, init);
     const finalUrl = res.url || url;
 
     if (!res.ok) {
       await res.body?.cancel().catch(() => undefined);
-      throw new HttpFailure(res.status, url);
+      if (res.status === 407 && proxy) throw errors.proxyAuth(proxy.label, url);
+      throw new HttpFailure(res.status, url, parseRetryAfter(res.headers.get("retry-after"), ctx.now()));
     }
 
     const { type, charset } = parseContentType(res.headers.get("content-type"));
@@ -241,21 +354,86 @@ async function fetchOnce(
     }
     return { kind: "html", finalUrl, html: decodeText(body, charset, true) };
   } catch (err) {
-    throw mapError(err, url, timeoutMs);
+    throw mapError(err, url, ctx.totalMs, proxy, ctx.proxyEnv);
+  }
+}
+
+// ----------------------------------------------------------------------- retry
+
+/** Espera (ms) antes da próxima tentativa, ou null se o erro não é repetível. */
+function retryDelayMs(err: unknown, attempt: number, random: () => number): number | null {
+  let retryAfter: number | undefined;
+  if (err instanceof HttpFailure) {
+    if (!RETRY_STATUS_CODES.includes(err.status)) return null;
+    retryAfter = err.retryAfterMs;
+  } else if (err instanceof NetworkFailure) {
+    if (!err.transient) return null;
+  } else {
+    return null; // timeout, tipo não suportado, URL inválida, corpo grande, etc.
+  }
+  if (retryAfter !== undefined) return Math.min(retryAfter, RETRY_MAX_DELAY_MS);
+  // Backoff exponencial com jitter entre 50% e 100% do valor nominal.
+  const nominal = RETRY_BASE_DELAY_MS * 2 ** attempt;
+  return Math.min(Math.round(nominal * (0.5 + random() * 0.5)), RETRY_MAX_DELAY_MS);
+}
+
+async function fetchWithRetry(target: URL, ctx: FetchContext): Promise<FetchResult> {
+  for (let attempt = 0; ; attempt++) {
+    const remaining = ctx.deadline - ctx.now();
+    if (remaining <= 0) throw errors.timeout(target.href, ctx.totalMs);
+    try {
+      return await fetchOnce(target, ctx, remaining);
+    } catch (err) {
+      if (attempt >= RETRY_MAX_RETRIES) throw err;
+      const delay = retryDelayMs(err, attempt, ctx.random);
+      if (delay === null) throw err;
+      // Sem tempo para esperar e ainda tentar de novo: falha agora, sem estourar o orçamento.
+      if (delay >= ctx.deadline - ctx.now()) throw err;
+      await ctx.sleep(delay);
+    }
   }
 }
 
 // -------------------------------------------------------------------------- API
 
-export async function fetchPage(rawUrl: string, opts: FetchOptions = {}): Promise<FetchResult> {
+/** Extensões de FetchOptions voltadas a testes; a pipeline não precisa informá-las. */
+export interface FetchPageOptions extends FetchOptions {
+  /** Padrão: process.env. */
+  env?: NodeJS.ProcessEnv;
+  /** Padrão: setTimeout real. */
+  sleep?: (ms: number) => Promise<void>;
+  /** Padrão: Math.random (jitter do backoff). */
+  random?: () => number;
+  /** Padrão: Date.now. */
+  now?: () => number;
+}
+
+const realSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+export async function fetchPage(rawUrl: string, opts: FetchPageOptions = {}): Promise<FetchResult> {
   const url = parseUrl(rawUrl);
-  const fetchImpl = opts.fetchImpl ?? globalThis.fetch;
-  const timeoutMs = opts.timeoutMs ?? FETCH_TIMEOUT_MS;
+  const proxyEnv = readProxyEnv(opts.env ?? process.env);
+  const dispatcher = getProxyDispatcher(proxyEnv);
+  // O fetch embutido do Node não aceita com segurança um Dispatcher de outra cópia do undici:
+  // com proxy, usamos o fetch do próprio undici.
+  const fetchImpl = opts.fetchImpl ?? (dispatcher ? (undiciFetch as unknown as typeof fetch) : globalThis.fetch);
+  const totalMs = opts.timeoutMs ?? FETCH_TIMEOUT_MS;
+  const now = opts.now ?? Date.now;
+  const ctx: FetchContext = {
+    fetchImpl,
+    dispatcher,
+    proxyEnv,
+    totalMs,
+    deadline: now() + totalMs,
+    now,
+    sleep: opts.sleep ?? realSleep,
+    random: opts.random ?? Math.random,
+  };
 
   const alt = findRewrite(url);
   if (alt) {
     try {
-      return await fetchOnce(alt, fetchImpl, timeoutMs);
+      return await fetchWithRetry(alt, ctx);
     } catch (err) {
       const fallbackable =
         (err instanceof HttpFailure && err.status >= 400 && err.status < 500) ||
@@ -263,5 +441,5 @@ export async function fetchPage(rawUrl: string, opts: FetchOptions = {}): Promis
       if (!fallbackable) throw err;
     }
   }
-  return fetchOnce(url, fetchImpl, timeoutMs);
+  return fetchWithRetry(url, ctx);
 }
