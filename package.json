@@ -1,21 +1,54 @@
 {
   "name": "web2md-mcp-server",
-  "version": "1.2.0",
+  "version": "1.3.0",
+  "mcpName": "io.github.carlosiwakuraa/web2md-mcp-server",
   "description": "MCP server that fetches a URL locally and returns faithful GFM Markdown",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "markdown",
+    "html-to-markdown",
+    "web",
+    "fetch",
+    "claude",
+    "mcpb"
+  ],
+  "homepage": "https://github.com/carlosiwakuraa/web2md-mcp-server#readme",
+  "bugs": {
+    "url": "https://github.com/carlosiwakuraa/web2md-mcp-server/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/carlosiwakuraa/web2md-mcp-server.git"
+  },
+  "author": "carlosiwakuraa",
+  "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
     "web2md-mcp-server": "dist/index.js"
   },
+  "files": [
+    "dist",
+    "!dist/**/*.map",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "test": "vitest run",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run clean && npm run build && npm test",
+    "mcpb:validate": "npx --yes @anthropic-ai/mcpb@2.1.2 validate manifest.json",
+    "mcpb:pack": "bash scripts/build-mcpb.sh"
   },
   "engines": {
     "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.3.1",

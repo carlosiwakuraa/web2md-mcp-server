@@ -131,10 +131,11 @@ describe("tool de lote via stdio", () => {
     );
   });
 
-  it("server/discover traz a versão 1.2.0 e instructions", async () => {
+  it("server/discover traz a versão do package.json e instructions", async () => {
     const r = await client.request("server/discover");
     const info = r.result!._meta["io.modelcontextprotocol/serverInfo"];
-    expect(info.version).toBe("1.2.0");
+    const pkg = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8"));
+    expect(info.version).toBe(pkg.version);
     expect(JSON.stringify(r.result)).toContain("subagents");
   });
 
