@@ -307,8 +307,25 @@ export function matchFragment(headings: HeadingInfo[], fragment: string): Headin
 
 // ------------------------------------------------------------------ outline
 
-/** Índice hierárquico em Markdown (lista aninhada pela pilha de níveis). */
-export function renderOutline(headings: HeadingInfo[], totalChars: number, title?: string): string {
+/** Aviso de índice cortado (em português; vai no fim do texto do outline). */
+export function outlineTruncationNotice(shown: number, total: number): string {
+  return `[Índice truncado: exibidos ${shown} de ${total} headings. Use section="<slug>" numa seção pai, ou aumente max_chars, para ver o restante]`;
+}
+
+/**
+ * Índice hierárquico em Markdown (lista aninhada pela pilha de níveis).
+ *
+ * `maxChars` limita o tamanho do texto devolvido (padrão: sem limite). Se o índice completo não couber,
+ * mostra só os primeiros N itens que cabem (sempre linhas inteiras, na ordem do documento) e termina com
+ * `outlineTruncationNotice`. O resultado nunca passa de `maxChars`: se nem o cabeçalho e o aviso couberem,
+ * descarta a introdução, depois o título, e por fim corta o próprio aviso.
+ */
+export function renderOutline(
+  headings: HeadingInfo[],
+  totalChars: number,
+  title?: string,
+  maxChars: number = Number.POSITIVE_INFINITY,
+): string {
   const head = title ? `# Outline: ${title.replace(/\s+/g, " ")}` : "# Outline";
   const intro =
     `Documento completo: ${totalChars} caracteres. ` +
@@ -324,5 +341,26 @@ export function renderOutline(headings: HeadingInfo[], totalChars: number, title
     const label = h.text || "(sem texto)";
     return `${indent}- ${label} (h${h.level}) — slug: \`${h.slug}\` — offset ${h.start}–${h.end} (${h.chars} caracteres)`;
   });
-  return `${head}\n\n${intro}\n\n${items.join("\n")}\n`;
+  const full = `${head}\n\n${intro}\n\n${items.join("\n")}\n`;
+  if (full.length <= maxChars) return full;
+
+  // Não cabe: prefixos do mais completo ao mais enxuto; em cada um, o maior N de itens que cabe junto do aviso.
+  const prefixes = [`${head}\n\n${intro}\n\n`, `${head}\n\n`, ""];
+  for (const prefix of prefixes) {
+    let best = -1;
+    let itemsLen = 0; // tamanho de items[0..n) unidos por "\n"
+    for (let n = 0; n < items.length; n++) {
+      if (n > 0) itemsLen += items[n - 1]!.length + (n > 1 ? 1 : 0);
+      const notice = outlineTruncationNotice(n, items.length);
+      // prefixo + itens + "\n\n" (só se houver itens) + aviso + "\n"
+      const len = prefix.length + (n > 0 ? itemsLen + 2 : 0) + notice.length + 1;
+      if (len > maxChars) break; // o tamanho só cresce com n
+      best = n;
+    }
+    if (best >= 0) {
+      const shown = items.slice(0, best);
+      return `${prefix}${best > 0 ? `${shown.join("\n")}\n\n` : ""}${outlineTruncationNotice(best, items.length)}\n`;
+    }
+  }
+  return `${outlineTruncationNotice(0, items.length)}\n`.slice(0, Math.max(0, maxChars));
 }

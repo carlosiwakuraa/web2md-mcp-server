@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { convertHtml, runPipeline } from "../src/pipeline.js";
+import { MAX_STRUCTURED_HEADINGS, convertHtml, runPipeline } from "../src/pipeline.js";
 import {
   foldText,
   matchFragment,
@@ -389,5 +389,165 @@ describe("runPipeline: section sobre HTML", () => {
     expect(r.section!.id).toBe("a");
     expect(r.text).toContain("texto alfa");
     expect(r.text).not.toContain("texto beta");
+  });
+});
+
+// ------------------------------------------------- outline: max_chars limita o índice
+
+/** Markdown com `n` headings H2 (cada um com um parágrafo curto) sob um H1. */
+function bigDoc(n: number): string {
+  const parts = ["# Changelog\n\nIntro.\n"];
+  for (let i = 0; i < n; i++) parts.push(`## Versão ${i}\n\nNotas da versão ${i}.\n`);
+  return parts.join("\n");
+}
+
+const runBig = (n: number, over: Partial<ToolInput> = {}) =>
+  runPipeline(input({ mode: "outline", ...over }), { fetchImpl: fakeFetch(bigDoc(n)) });
+
+const NOTICE_RE =
+  /\[Índice truncado: exibidos (\d+) de (\d+) headings\. Use section="<slug>" numa seção pai, ou aumente max_chars, para ver o restante\]/;
+
+describe("renderOutline: limite de tamanho", () => {
+  const hs = parseHeadings(DOC);
+
+  it("sem limite (ou com limite folgado) o resultado é idêntico e sem aviso", () => {
+    const free = renderOutline(hs, 1000, "Guia");
+    expect(renderOutline(hs, 1000, "Guia", free.length)).toBe(free);
+    expect(renderOutline(hs, 1000, "Guia", 100_000)).toBe(free);
+    expect(free).not.toContain("Índice truncado");
+  });
+
+  it("não cabe: mostra os primeiros N itens inteiros, aviso no fim, nunca acima do limite", () => {
+    const free = renderOutline(hs, 1000, "Guia");
+    const itemLines = free.split("\n").filter((l) => l.includes("— slug:"));
+    let checked = 0;
+    for (let max = free.length - 1; max >= 0; max -= 7) {
+      const out = renderOutline(hs, 1000, "Guia", max);
+      expect(out.length).toBeLessThanOrEqual(max);
+      const m = NOTICE_RE.exec(out);
+      if (!m) continue; // limites minúsculos degradam o aviso; o teto vale mesmo assim
+      checked++;
+      const shown = Number(m[1]);
+      expect(Number(m[2])).toBe(itemLines.length);
+      expect(shown).toBeLessThan(itemLines.length);
+      // Cada item exibido é uma linha completa e na ordem original.
+      expect(out.split("\n").filter((l) => l.includes("— slug:"))).toEqual(itemLines.slice(0, shown));
+      expect(out.trimEnd().endsWith("]")).toBe(true);
+    }
+    expect(checked).toBeGreaterThan(3);
+  });
+
+  it("devolve o maior N possível (um item a mais estouraria)", () => {
+    const free = renderOutline(hs, 1000, "Guia");
+    const lines = free.split("\n").filter((l) => l.includes("— slug:"));
+    const max = free.length - lines[lines.length - 1]!.length - 5;
+    const out = renderOutline(hs, 1000, "Guia", max);
+    const shown = Number(NOTICE_RE.exec(out)![1]);
+    expect(shown).toBeGreaterThan(0);
+    expect(shown).toBeLessThan(lines.length);
+    // Com mais um item a saída passaria do limite.
+    const oneMore = lines.slice(0, shown + 1).join("\n");
+    const head = free.slice(0, free.indexOf(lines[0]!));
+    const withNext = `${head}${oneMore}\n\n[Índice truncado: exibidos ${shown + 1} de ${lines.length} headings. Use section="<slug>" numa seção pai, ou aumente max_chars, para ver o restante]\n`;
+    expect(withNext.length).toBeGreaterThan(max);
+  });
+
+  it("limite minúsculo: degrada (sem intro/título) mas respeita o teto", () => {
+    for (const max of [1, 40, 100, 160, 250]) {
+      expect(renderOutline(hs, 1000, "Guia", max).length).toBeLessThanOrEqual(max);
+    }
+  });
+});
+
+describe("runPipeline: outline com max_chars", () => {
+  it("outline pequeno cabe em max_chars: inalterado, sem aviso", async () => {
+    const small = await run({ mode: "outline" });
+    expect(small.text).not.toContain("Índice truncado");
+    const again = await run({ mode: "outline", max_chars: small.text.length });
+    expect(again.text).toBe(small.text);
+    expect(again.headings_truncated).toBe(false);
+  });
+
+  it("outline grande: texto truncado dentro de max_chars, com aviso e contagem correta", async () => {
+    const full = await runBig(300, { max_chars: 500_000 });
+    expect(full.text).not.toContain("Índice truncado");
+    expect(full.text.length).toBeGreaterThan(20_000);
+
+    const r = await runBig(300, { max_chars: 4000 });
+    expect(r.text.length).toBeLessThanOrEqual(4000);
+    expect(r.text.startsWith("---\nurl: https://exemplo.com/guia.md\n")).toBe(true);
+    expect(r.text).toContain("mode: outline");
+    const m = NOTICE_RE.exec(r.text)!;
+    expect(m).not.toBeNull();
+    const shown = Number(m[1]);
+    expect(Number(m[2])).toBe(301); // H1 + 300 H2
+    expect(shown).toBeGreaterThan(5);
+    expect(shown).toBeLessThan(301);
+    expect(r.text.trimEnd().endsWith("]")).toBe(true);
+    // Itens exibidos = linhas de item no texto; corte em limite de item (todas completas e consecutivas).
+    const lines = r.text.split("\n").filter((l) => l.includes("— slug:"));
+    expect(lines).toHaveLength(shown);
+    for (const l of lines) expect(l).toMatch(/\(\d+ caracteres\)$/);
+    expect(lines[0]).toContain("`changelog`");
+    expect(lines[shown - 1]).toContain(`\`versao-${shown - 2}\``);
+    // Ainda é o documento completo nas contagens.
+    expect(r.total_chars).toBe(r.document.length);
+    expect(r.document_chars).toBe(r.document.length);
+    expect(r.next_start_index).toBeNull();
+  });
+
+  it("start_index é ignorado (o índice não é paginado)", async () => {
+    const a = await runBig(300, { max_chars: 4000 });
+    const b = await runBig(300, { max_chars: 4000, start_index: 10_000 });
+    expect(b.text).toBe(a.text);
+  });
+
+  it("max_chars pequeno: texto continua dentro do limite", async () => {
+    for (const max of [100, 300, 600]) {
+      const r = await runBig(300, { max_chars: max });
+      expect(r.text.length).toBeLessThanOrEqual(max);
+      expect(r.text).toContain("Índice truncado");
+    }
+  });
+
+  it("structuredContent: lista completa abaixo do teto, mesmo que o texto seja truncado", async () => {
+    const r = await runBig(300, { max_chars: 4000 });
+    expect(r.headings).toHaveLength(301);
+    expect(r.headings_truncated).toBe(false);
+    expect(r.headings![300]!.slug).toBe("versao-299");
+  });
+
+  it("structuredContent: acima de 500 headings a lista é cortada e headings_truncated = true", async () => {
+    const r = await runBig(MAX_STRUCTURED_HEADINGS + 100, { max_chars: 20_000 });
+    expect(r.headings).toHaveLength(MAX_STRUCTURED_HEADINGS);
+    expect(r.headings_truncated).toBe(true);
+    expect(NOTICE_RE.exec(r.text)![2]).toBe(String(MAX_STRUCTURED_HEADINGS + 101));
+    expect(r.document_chars).toBe(r.document.length);
+    const exact = await runBig(MAX_STRUCTURED_HEADINGS - 1, { max_chars: 500_000 });
+    expect(exact.headings).toHaveLength(MAX_STRUCTURED_HEADINGS);
+    expect(exact.headings_truncated).toBe(false);
+  });
+
+  it("section + outline truncado: só a subárvore, contagem sobre a subárvore", async () => {
+    const md =
+      "# Ref\n\n## Pacote\n\n" +
+      Array.from({ length: 120 }, (_, i) => `### Função ${i}\n\ntexto ${i}\n`).join("\n") +
+      "\n## Outro\n\nfim\n";
+    const r = await runPipeline(input({ mode: "outline", section: "pacote", max_chars: 3000 }), {
+      fetchImpl: fakeFetch(md),
+    });
+    expect(r.text.length).toBeLessThanOrEqual(3000);
+    expect(r.text).toContain("section_slug: pacote");
+    const m = NOTICE_RE.exec(r.text)!;
+    expect(Number(m[2])).toBe(121); // Pacote + 120 funções (sem Ref e Outro)
+    expect(r.text).not.toContain("`outro`");
+    expect(r.headings).toHaveLength(121);
+    expect(r.section).toMatchObject({ slug: "pacote" });
+    expect(r.total_chars).toBe(r.document.length);
+  });
+
+  it("modos article/section não têm headings_truncated", async () => {
+    expect((await run()).headings_truncated).toBe(false);
+    expect((await run({ section: "uso" })).headings_truncated).toBe(false);
   });
 });

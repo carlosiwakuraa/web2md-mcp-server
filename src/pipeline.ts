@@ -52,9 +52,21 @@ export type PipelineResult = PageSlice & {
   title?: string;
   /** Seção devolvida (parâmetro section ou fragmento da URL), ou null. */
   section: OutlineEntry | null;
-  /** Lista de headings no modo outline, ou null. */
+  /** Lista de headings no modo outline (limitada a MAX_STRUCTURED_HEADINGS), ou null. */
   headings: OutlineEntry[] | null;
+  /** true se `headings` foi cortada em MAX_STRUCTURED_HEADINGS (há mais headings do que os listados). */
+  headings_truncated: boolean;
 };
+
+/**
+ * Teto de headings no structuredContent. Vários clientes repassam o structuredContent ao modelo; em
+ * changelogs/referências de API com milhares de headings a lista (~130 bytes por item) anularia o
+ * propósito do modo outline. O texto já é limitado por max_chars; este teto limita o dado estruturado.
+ */
+export const MAX_STRUCTURED_HEADINGS = 500;
+
+/** Menor orçamento de corpo (após o frontmatter) para ainda mantermos o frontmatter no outline truncado. */
+const MIN_OUTLINE_BODY_CHARS = 250;
 
 /** Modo de conversão efetivo: "outline" converte como "article" (e compartilha o arquivo salvo dele). */
 export function conversionMode(mode: ToolMode): Mode {
@@ -184,27 +196,41 @@ export async function runPipeline(
 
   if (outline) {
     const listed = shiftHeadings(target ? subtree(headings, target) : headings, base);
-    const text = renderDocument(
-      { ...fm, mode: "outline", ...sectionFm },
-      renderOutline(listed, document.length, fm.title),
-    );
-    // O índice não é paginado: max_chars/start_index não se aplicam; total_chars é o do documento completo.
+    const outlineFm = { ...fm, mode: "outline" as const, ...sectionFm };
+    // O índice não é paginado (start_index não se aplica), mas max_chars limita o TEXTO inteiro (frontmatter
+    // + índice + aviso): se não couber, renderOutline mostra só os primeiros itens que cabem.
+    const fmChars = renderDocument(outlineFm, "").length;
+    let text = renderDocument(outlineFm, renderOutline(listed, document.length, fm.title));
+    if (text.length > input.max_chars) {
+      // Com max_chars minúsculo o frontmatter sozinho pode estourar: nesse caso ele é descartado.
+      const keepFm = input.max_chars - fmChars >= MIN_OUTLINE_BODY_CHARS;
+      const body = renderOutline(
+        listed,
+        document.length,
+        fm.title,
+        keepFm ? input.max_chars - fmChars : input.max_chars,
+      );
+      text = keepFm ? renderDocument(outlineFm, body) : body;
+    }
+    // total_chars é o do documento completo.
+    const headingsTruncated = listed.length > MAX_STRUCTURED_HEADINGS;
     return {
       ...common,
       text,
       total_chars: document.length,
       next_start_index: null,
       section: target ? toEntry(shiftHeadings([target], base)[0]!) : null,
-      headings: listed.map(toEntry),
+      headings: listed.slice(0, MAX_STRUCTURED_HEADINGS).map(toEntry),
+      headings_truncated: headingsTruncated,
     };
   }
 
   if (target) {
     const sectionDoc = renderDocument({ ...fm, ...sectionFm }, sliceSection(body, target));
     const slice = paginate(sectionDoc, input.start_index, input.max_chars);
-    return { ...common, ...slice, section: toEntry(shiftHeadings([target], base)[0]!), headings: null };
+    return { ...common, ...slice, section: toEntry(shiftHeadings([target], base)[0]!), headings: null, headings_truncated: false };
   }
 
   const slice = paginate(document, input.start_index, input.max_chars);
-  return { ...common, ...slice, section: null, headings: null };
+  return { ...common, ...slice, section: null, headings: null, headings_truncated: false };
 }

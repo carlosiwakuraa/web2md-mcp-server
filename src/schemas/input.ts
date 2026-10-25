@@ -21,7 +21,7 @@ export const InputSchema = z
       .enum(["article", "full", "outline"])
       .default("article")
       .describe(
-        'Modo de extração. "article" (padrão) devolve só o conteúdo principal, sem menu, rodapé ou barra lateral. "full" converte o <body> inteiro; use se "article" devolver pouco conteúdo ou o conteúdo errado. "outline" converte como "article", mas devolve só o índice de headings (nível, texto, slug, offset e tamanho de cada seção) para economizar contexto; depois leia a seção desejada com o parâmetro section.',
+        'Modo de extração. "article" (padrão) devolve só o conteúdo principal, sem menu, rodapé ou barra lateral. "full" converte o <body> inteiro; use se "article" devolver pouco conteúdo ou o conteúdo errado. "outline" converte como "article", mas devolve só o índice de headings (nível, texto, slug, offset e tamanho de cada seção) para economizar contexto; depois leia a seção desejada com o parâmetro section. O texto do índice respeita max_chars: se não couber, mostra só os primeiros headings e termina com um aviso de truncamento.',
       ),
     max_chars: z
       .number()
@@ -30,7 +30,7 @@ export const InputSchema = z
       .max(MAX_MAX_CHARS)
       .default(DEFAULT_MAX_CHARS)
       .describe(
-        `Máximo de caracteres por resposta (${MIN_MAX_CHARS}–${MAX_MAX_CHARS}, padrão ${DEFAULT_MAX_CHARS}). Se o documento for maior, a resposta termina com um marcador indicando o start_index da continuação.`,
+        `Máximo de caracteres por resposta (${MIN_MAX_CHARS}–${MAX_MAX_CHARS}, padrão ${DEFAULT_MAX_CHARS}). Se o documento for maior, a resposta termina com um marcador indicando o start_index da continuação. Com mode="outline" limita o tamanho do índice (que não é paginado): o que não couber é omitido, com um aviso no fim.`,
       ),
     start_index: z
       .number()
@@ -95,7 +95,12 @@ export const OutputSchema = z.object({
   headings: z
     .array(HeadingSchema)
     .nullable()
-    .describe('Lista estruturada de headings com mode="outline" (e return_content=true); null caso contrário.'),
+    .describe(
+      'Lista estruturada de headings com mode="outline" (e return_content=true); null caso contrário. Limitada a 500 itens (veja headings_truncated), independentemente de max_chars.',
+    ),
+  headings_truncated: z
+    .boolean()
+    .describe("true se headings foi cortada em 500 itens (a página tem mais headings do que os listados); false caso contrário."),
   next_start_index: z
     .number()
     .int()

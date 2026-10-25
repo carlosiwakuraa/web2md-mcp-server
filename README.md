@@ -160,12 +160,12 @@ Na regra de domínio (URL reescrita com fallback para a original), o fallback s�
 |---|---|---|---|
 | `url` | string | obrigatório | URL `http://` ou `https://` da página. |
 | `mode` | `"article"` \| `"full"` \| `"outline"` | `"article"` | `article` extrai só o conteúdo principal (sem menu, rodapé e barra lateral). `full` converte o `<body>` inteiro; use quando a extração errar o conteúdo. `outline` converte como `article`, mas devolve só o índice de headings (veja [Outline e seções](#outline-e-seções)). |
-| `max_chars` | inteiro (100–500000) | `50000` | Limite de caracteres por resposta. |
-| `start_index` | inteiro ≥ 0 | `0` | Posição do documento onde a resposta começa, para paginar. |
+| `max_chars` | inteiro (100–500000) | `50000` | Limite de caracteres por resposta. No `outline`, limita o tamanho do índice. |
+| `start_index` | inteiro ≥ 0 | `0` | Posição do documento onde a resposta começa, para paginar. Não se aplica ao `outline`. |
 | `include_links` | booleano | `false` | Anexa a seção `## Links da página` com os links do conteúdo. |
 | `section` | string | — | Devolve só uma seção do documento: slug, texto ou id do heading. Sem ele, o `#fragmento` da URL é usado se casar com um heading. Veja [Outline e seções](#outline-e-seções). |
 
-Além do texto, a resposta traz `structuredContent` com `{ url, source, total_chars, document_chars, next_start_index, saved_path, section, headings }` (`section` e `headings` são `null` fora de `section`/`outline`).
+Além do texto, a resposta traz `structuredContent` com `{ url, source, total_chars, document_chars, next_start_index, saved_path, section, headings, headings_truncated }` (`section` e `headings` são `null` fora de `section`/`outline`).
 
 ### Pasta de saída
 
@@ -198,7 +198,7 @@ Para páginas longas, evite trazer o documento inteiro: peça o índice e depois
      - Requisitos (h3) — slug: `requisitos` — offset 1790–2380 (590 caracteres)
    ```
 
-   O `structuredContent` traz a mesma lista em `headings` (`{ heading, level, slug, id, start, end, chars }`) e `total_chars` com o tamanho do documento completo. Os offsets são posições de caracteres no **documento completo salvo em disco** (frontmatter incluído), então valem também para ler o arquivo em `saved_path` por intervalo. O índice não é paginado (`max_chars` e `start_index` não se aplicam).
+   O `structuredContent` traz a mesma lista em `headings` (`{ heading, level, slug, id, start, end, chars }`) e `total_chars` com o tamanho do documento completo. Os offsets são posições de caracteres no **documento completo salvo em disco** (frontmatter incluído), então valem também para ler o arquivo em `saved_path` por intervalo. O índice não é paginado (`start_index` não se aplica), mas **`max_chars` limita o tamanho do texto**: se o índice (com frontmatter) não couber, aparecem só os primeiros headings que cabem, em linhas inteiras, e o texto termina com o aviso `[Índice truncado: exibidos X de Y headings. Use section="<slug>" numa seção pai, ou aumente max_chars, para ver o restante]`. O texto nunca passa de `max_chars` (com `max_chars` muito pequeno o frontmatter também é omitido), e `total_chars`/`document_chars` continuam sendo os do documento completo. Em páginas com milhares de headings (changelogs, referências de API), `headings` no `structuredContent` é limitado a 500 itens e `headings_truncated` vira `true`; para o restante, peça `section="<slug>"` numa seção pai.
 2. `section: "<slug>"` devolve só aquela seção.
 
 Regras de `section`:

@@ -180,7 +180,7 @@ describe("servidor MCP (stdio, spec 2026-07-28)", () => {
 
     expect(tool.outputSchema.type).toBe("object");
     expect(Object.keys(tool.outputSchema.properties).sort()).toEqual(
-      ["document_chars", "headings", "next_start_index", "saved_path", "section", "source", "total_chars", "url"].sort(),
+      ["document_chars", "headings", "headings_truncated", "next_start_index", "saved_path", "section", "source", "total_chars", "url"].sort(),
     );
   });
 
