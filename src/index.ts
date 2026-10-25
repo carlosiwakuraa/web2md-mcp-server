@@ -21,14 +21,14 @@ Parâmetros:
 - url (obrigatório): URL http:// ou https:// da página.
 - mode: "article" (padrão) extrai só o conteúdo principal (main/article, sem menu, rodapé e barra lateral). Use "full" para converter o <body> inteiro quando "article" devolver pouco conteúdo ou o conteúdo errado. Use "outline" para ler só o índice de headings da página (converte como "article"): economiza contexto em páginas longas; depois peça a seção desejada com section.
 - section: devolve só uma seção do documento convertido, em vez da página inteira. Aceita o slug do heading (veja o outline), o texto do heading (sem diferenciar maiúsculas/acentos; prefixo ou trecho serve se for unívoco) ou o id HTML. A seção inclui o heading e tudo até o próximo heading de nível igual ou menor (subseções entram). Se section não for informado, o fragmento da URL (https://site/pagina#instalacao) é usado quando casar com um heading; se não casar, é ignorado e a página inteira é devolvida. Seção inexistente ou ambígua é erro e lista os headings disponíveis.
-- max_chars: limite de caracteres por resposta (padrão 50000). Não se aplica a mode="outline".
-- start_index: posição do documento onde a resposta começa (padrão 0), para paginar. Com section, a posição é dentro da seção. Não se aplica a mode="outline".
+- max_chars: limite de caracteres por resposta (padrão 50000). No outline limita o tamanho do índice: se não couber, só os primeiros headings aparecem, seguidos de um aviso de truncamento.
+- start_index: posição do documento onde a resposta começa (padrão 0), para paginar. Com section, a posição é dentro da seção. Não se aplica a mode="outline" (o índice não é paginado).
 - include_links: se true, anexa a seção "## Links da página" com todos os links do conteúdo.
 - return_content: se false, não devolve o Markdown no contexto; salva em disco e retorna só metadados (url, título, chars, caminho). Padrão true.
 
-Retorno: texto Markdown com um frontmatter YAML (url, canonical, title, description, lang, fetched_at, source), seguido do corpo com um único H1. Se o servidor responder com Markdown nativo, ele é devolvido diretamente (source: native-markdown). O structuredContent traz { url, source, total_chars, document_chars, next_start_index, saved_path, section, headings }.
+Retorno: texto Markdown com um frontmatter YAML (url, canonical, title, description, lang, fetched_at, source), seguido do corpo com um único H1. Se o servidor responder com Markdown nativo, ele é devolvido diretamente (source: native-markdown). O structuredContent traz { url, source, total_chars, document_chars, next_start_index, saved_path, section, headings, headings_truncated }.
 
-Outline: com mode="outline" a resposta é o frontmatter (com mode: outline) mais uma lista hierárquica dos headings, cada um com nível, texto, slug estável e offset inicial–final (em caracteres do documento completo, frontmatter incluído) e tamanho da seção; headings no structuredContent traz a mesma lista estruturada ({ heading, level, slug, id, start, end, chars }) e total_chars o tamanho do documento completo. Fluxo para economizar contexto: chame com mode="outline", escolha o slug e chame de novo com section="<slug>". Com section junto de outline, o índice se restringe àquela seção.
+Outline: com mode="outline" a resposta é o frontmatter (com mode: outline) mais uma lista hierárquica dos headings, cada um com nível, texto, slug estável e offset inicial–final (em caracteres do documento completo, frontmatter incluído) e tamanho da seção; headings no structuredContent traz a mesma lista estruturada ({ heading, level, slug, id, start, end, chars }) e total_chars o tamanho do documento completo. Fluxo para economizar contexto: chame com mode="outline", escolha o slug e chame de novo com section="<slug>". Com section junto de outline, o índice se restringe àquela seção. O texto do índice respeita max_chars: em páginas com muitos headings ele termina com o aviso "[Índice truncado: exibidos X de Y headings ...]"; use section="<slug>" numa seção pai para ver o restante. headings no structuredContent é limitado a 500 itens (headings_truncated=true quando há mais).
 
 Seção: com section (ou fragmento da URL) o texto é o frontmatter (com os campos section e section_slug) mais só a seção; total_chars e a paginação (max_chars/start_index/next_start_index) valem para esse documento da seção, e section no structuredContent descreve o heading escolhido. Blocos de código nunca são cortados nem confundem a detecção de headings. document_chars é sempre o tamanho do documento completo salvo.
 
@@ -116,6 +116,7 @@ export async function handleFetchMarkdown(input: ToolInput): Promise<CallToolRes
         document_chars: page.document_chars,
         section: page.section,
         headings: input.return_content ? page.headings : null,
+        headings_truncated: input.return_content ? page.headings_truncated : false,
         next_start_index,
         saved_path: savedPath,
       },
