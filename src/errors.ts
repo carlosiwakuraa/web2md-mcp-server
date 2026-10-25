@@ -28,8 +28,14 @@ export const errors = {
       "INVALID_URL",
       `URL inválida: "${raw}". Use uma URL absoluta http:// ou https://.`,
     ),
-  http: (status: number, url: string) =>
-    new Web2mdError("HTTP_ERROR", `Erro HTTP ${status} ao acessar ${url}`),
+  http: (status: number, url: string, retryAfterSeconds?: number) =>
+    new Web2mdError(
+      "HTTP_ERROR",
+      `Erro HTTP ${status} ao acessar ${url}` +
+        (retryAfterSeconds !== undefined
+          ? `. O servidor pediu para aguardar ${retryAfterSeconds} s antes de nova tentativa; não repeti automaticamente.`
+          : ""),
+    ),
   timeout: (url: string, ms: number) =>
     new Web2mdError(
       "TIMEOUT",
