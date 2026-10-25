@@ -32,6 +32,16 @@ describe("resolveOutputDir", () => {
     expect(resolveOutputDir({ WEB2MD_OUTPUT_DIR: tmp })).toBe(tmp);
   });
 
+  it("vazio, só espaços ou placeholder não resolvido caem no padrão", () => {
+    for (const v of ["", "   ", "${user_config.output_dir}", "  ${user_config.output_dir} "]) {
+      expect(resolveOutputDir({ WEB2MD_OUTPUT_DIR: v })).toBe(path.join(tmpdir(), "web2md"));
+    }
+  });
+
+  it("valor válido é usado após trim", () => {
+    expect(resolveOutputDir({ WEB2MD_OUTPUT_DIR: `  ${tmp}  ` })).toBe(tmp);
+  });
+
   it("padrão: os.tmpdir()/web2md", () => {
     expect(resolveOutputDir({})).toBe(path.join(tmpdir(), "web2md"));
   });

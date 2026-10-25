@@ -22,13 +22,13 @@ Desde a v1.2.0 há também a tool `web2md_fetch_markdown_batch`, que converte v�
 
 ## Instalação
 
-Requer Node 20 ou superior (o bundle .mcpb usa o Node embutido no Claude Desktop).
+Requer Node 20.18.1 ou superior (o bundle .mcpb usa o Node embutido no Claude Desktop).
 
 ### Claude Desktop (bundle .mcpb)
 
 1. Baixe o `web2md.mcpb` da [página de releases](https://github.com/carlosiwakuraa/web2md-mcp-server/releases/latest).
 2. Dê um duplo clique no arquivo (ou arraste-o para **Configurações > Extensões**) e confirme a instalação.
-3. Opcional: na tela da extensão, defina a **Pasta de saída** (`WEB2MD_OUTPUT_DIR`) e o **Proxy HTTPS**.
+3. Opcional: na tela da extensão, defina a **Pasta de saída** (`WEB2MD_OUTPUT_DIR`) e o **Proxy HTTPS**. Campos em branco são ignorados, inclusive se o host repassar o placeholder `${user_config.…}` sem substituí-lo.
 
 ### Claude Code (npx)
 
@@ -134,7 +134,7 @@ O servidor respeita as variáveis de ambiente de proxy padrão. Defina-as via `e
 }
 ```
 
-- **Escolha por esquema.** URLs `https://` usam só `HTTPS_PROXY` e URLs `http://` usam só `HTTP_PROXY`. Se existirem as duas grafias de uma variável, a minúscula vence. Valor vazio ou só com espaços conta como não definido; sem nenhuma variável de proxy, o comportamento é o mesmo de antes.
+- **Escolha por esquema.** URLs `https://` usam só `HTTPS_PROXY` e URLs `http://` usam só `HTTP_PROXY`. Se existirem as duas grafias de uma variável, a minúscula vence. Valor vazio, só com espaços ou com placeholder `${...}` não resolvido (como `${user_config.https_proxy}` do bundle .mcpb) conta como não definido; sem nenhuma variável de proxy, o comportamento é o mesmo de antes.
 - **Formato do proxy.** `http://host:porta` ou `https://host:porta`; o esquema pode ser omitido (`proxy:3128` vira `http://proxy:3128`). Credenciais na URL (`usuario:senha@`) são enviadas ao proxy como `Proxy-Authorization: Basic`. Use `%40`, `%3A` etc. para caracteres especiais na senha.
 - **`NO_PROXY`.** Lista separada por vírgulas ou espaços. Aceita `*` (nunca usar proxy), nomes de host (`exemplo.com`, que também cobre `api.exemplo.com`), sufixos com ponto ou curinga (`.exemplo.com`, `*.exemplo.com`), `host:porta` (`interno.local:8080`) e IPs (`127.0.0.1`, `[::1]`). Intervalos CIDR não são suportados.
 - **Redirects** são decididos a cada salto: um redirect para um host em `NO_PROXY` vai direto, e um de `http` para `https` passa a usar `HTTPS_PROXY`.

@@ -46,6 +46,32 @@ describe("readProxyEnv", () => {
     }
   });
 
+  it("ignora placeholder não resolvido do manifest (${user_config.xxx}), com ou sem espaços", () => {
+    for (const ph of ["${user_config.https_proxy}", "  ${user_config.https_proxy}  ", "${"]) {
+      const env = readProxyEnv({
+        HTTPS_PROXY: ph,
+        https_proxy: ph,
+        HTTP_PROXY: ph,
+        http_proxy: ph,
+        NO_PROXY: ph,
+        no_proxy: ph,
+      });
+      expect(env.httpsProxy).toBeUndefined();
+      expect(env.httpProxy).toBeUndefined();
+      expect(env.noProxy).toBeUndefined();
+      expect(getProxyDispatcher(env)).toBeUndefined();
+      expect(sel("https://example.com/", { HTTPS_PROXY: ph })).toBeNull();
+    }
+  });
+
+  it("placeholder cai para a outra grafia válida; valor válido continua sendo lido", () => {
+    expect(readProxyEnv({ https_proxy: "${user_config.https_proxy}", HTTPS_PROXY: "http://a:1" }).httpsProxy).toBe(
+      "http://a:1",
+    );
+    expect(readProxyEnv({ HTTPS_PROXY: "  http://a:1  " }).httpsProxy).toBe("http://a:1");
+    expect(readProxyEnv({ HTTPS_PROXY: "proxy.local:3128" }).httpsProxy).toBe("proxy.local:3128");
+  });
+
   it("minúscula vazia cai para a maiúscula definida", () => {
     expect(readProxyEnv({ https_proxy: "  ", HTTPS_PROXY: "http://a:1" }).httpsProxy).toBe("http://a:1");
   });

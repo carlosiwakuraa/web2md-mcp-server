@@ -1,4 +1,5 @@
 import { Agent, Dispatcher, ProxyAgent } from "undici";
+import { effectiveEnv } from "../env.js";
 import { errors } from "../errors.js";
 
 // ---------------------------------------------------------------- configuração
@@ -18,13 +19,13 @@ export interface ProxyEnv {
 function pick(env: NodeJS.ProcessEnv, lower: string, upper: string): { value?: string; name: string } {
   // A variável em minúsculas tem precedência (convenção do curl e do Node).
   for (const name of [lower, upper]) {
-    const value = env[name]?.trim();
+    const value = effectiveEnv(env[name]);
     if (value) return { value, name };
   }
   return { name: upper };
 }
 
-/** Lê HTTPS_PROXY/https_proxy, HTTP_PROXY/http_proxy e NO_PROXY/no_proxy. Variáveis vazias contam como ausentes. */
+/** Lê HTTPS_PROXY/https_proxy, HTTP_PROXY/http_proxy e NO_PROXY/no_proxy. Variáveis vazias ou com placeholder `${...}` não resolvido contam como ausentes. */
 export function readProxyEnv(env: NodeJS.ProcessEnv = process.env): ProxyEnv {
   const http = pick(env, "http_proxy", "HTTP_PROXY");
   const https = pick(env, "https_proxy", "HTTPS_PROXY");
