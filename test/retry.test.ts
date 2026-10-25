@@ -84,11 +84,34 @@ describe("fetchPage: retry", () => {
     expect(h.sleeps).toEqual([3000]);
   });
 
-  it("limita Retry-After ao teto", async () => {
+  it("Retry-After igual ao teto ainda é respeitado", async () => {
     const h = harness();
-    const { fetchImpl } = sequence([() => status(429, { "retry-after": "120" }), ok]);
-    await fetchPage("https://example.com/", { fetchImpl, ...h });
+    const { calls, fetchImpl } = sequence([() => status(429, { "retry-after": String(RETRY_MAX_DELAY_MS / 1000) }), ok]);
+    const r = await fetchPage("https://example.com/", { fetchImpl, ...h });
+    expect(r.kind).toBe("html");
+    expect(calls).toHaveLength(2);
     expect(h.sleeps).toEqual([RETRY_MAX_DELAY_MS]);
+  });
+
+  it("Retry-After acima do teto: falha na hora, sem espera nem retentativa", async () => {
+    const h = harness();
+    const { calls, fetchImpl } = sequence([() => status(429, { "retry-after": "120" }), ok]);
+    const e = await failure(fetchPage("https://example.com/x", { fetchImpl, ...h }));
+    expect(e.code).toBe("HTTP_ERROR");
+    expect(e.message.startsWith("Erro HTTP 429 ao acessar https://example.com/x")).toBe(true);
+    expect(e.message).toContain("aguardar 120 s");
+    expect(calls).toHaveLength(1);
+    expect(h.sleeps).toEqual([]);
+  });
+
+  it("Retry-After (data HTTP) acima do teto também não retenta", async () => {
+    const h = harness();
+    const now = Date.parse("2026-01-01T00:00:00Z");
+    const { calls, fetchImpl } = sequence([() => status(503, { "retry-after": "Thu, 01 Jan 2026 00:01:00 GMT" }), ok]);
+    const e = await failure(fetchPage("https://example.com/", { fetchImpl, ...h, now: () => now }));
+    expect(e.code).toBe("HTTP_ERROR");
+    expect(calls).toHaveLength(1);
+    expect(h.sleeps).toEqual([]);
   });
 
   it("backoff exponencial com jitter (sem Retry-After)", async () => {
@@ -189,6 +212,67 @@ describe("fetchPage: retry", () => {
       "https://developer.apple.com/documentation/swiftui/view.md",
       "https://developer.apple.com/documentation/swiftui/view.md",
     ]);
+  });
+});
+
+describe("fetchPage: fallback da regra de domínio", () => {
+  const APPLE = "https://developer.apple.com/documentation/swiftui/view";
+  const ALT = `${APPLE}.md`;
+
+  it("429 esgotado na URL reescrita não aciona o fallback", async () => {
+    const h = harness();
+    const { calls, fetchImpl } = sequence([() => status(429)]);
+    const e = await failure(fetchPage(APPLE, { fetchImpl, ...h }));
+    expect(e.code).toBe("HTTP_ERROR");
+    expect(e.message).toContain("429");
+    expect(calls).toEqual([ALT, ALT, ALT]);
+  });
+
+  it("429 com Retry-After acima do teto também não aciona o fallback", async () => {
+    const h = harness();
+    const { calls, fetchImpl } = sequence([() => status(429, { "retry-after": "120" }), ok]);
+    await failure(fetchPage(APPLE, { fetchImpl, ...h }));
+    expect(calls).toEqual([ALT]);
+  });
+
+  it("404 na URL reescrita aciona o fallback para a original", async () => {
+    const h = harness();
+    const { calls, fetchImpl } = sequence([() => status(404), ok]);
+    const r = await fetchPage(APPLE, { fetchImpl, ...h });
+    expect(r.kind).toBe("html");
+    expect(calls).toEqual([ALT, APPLE]);
+  });
+
+  it("content-type não suportado na URL reescrita aciona o fallback", async () => {
+    const h = harness();
+    const { calls, fetchImpl } = sequence([() => new Response("{}", { headers: { "content-type": "application/json" } }), ok]);
+    const r = await fetchPage(APPLE, { fetchImpl, ...h });
+    expect(r.kind).toBe("html");
+    expect(calls).toEqual([ALT, APPLE]);
+  });
+
+  it("o fallback tem orçamento próprio: recebe totalMs inteiro, não o que sobrou da URL reescrita", async () => {
+    const h = harness();
+    let t = 0;
+    const timeouts: number[] = [];
+    const realTimeout = AbortSignal.timeout;
+    AbortSignal.timeout = ((ms: number) => {
+      timeouts.push(ms);
+      return realTimeout.call(AbortSignal, ms);
+    }) as typeof AbortSignal.timeout;
+    try {
+      const fetchImpl = (async (u: string | URL) => {
+        if (String(u) === ALT) {
+          t += 9000;
+          return status(404);
+        }
+        return ok();
+      }) as typeof fetch;
+      await fetchPage(APPLE, { fetchImpl, ...h, timeoutMs: 10_000, now: () => t });
+    } finally {
+      AbortSignal.timeout = realTimeout;
+    }
+    expect(timeouts).toEqual([10_000, 10_000]);
   });
 });
 

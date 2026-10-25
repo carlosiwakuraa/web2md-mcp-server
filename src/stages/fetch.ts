@@ -71,7 +71,12 @@ class HttpFailure extends Web2mdError {
     /** Espera pedida pelo servidor via Retry-After, em ms (sem teto aplicado). */
     readonly retryAfterMs?: number,
   ) {
-    const base = errors.http(status, url);
+    // Retry-After acima do teto: não retentamos; avisa na mensagem (texto base preservado).
+    const waitHint =
+      retryAfterMs !== undefined && RETRY_STATUS_CODES.includes(status) && retryAfterMs > RETRY_MAX_DELAY_MS
+        ? Math.ceil(retryAfterMs / 1000)
+        : undefined;
+    const base = errors.http(status, url, waitHint);
     super(base.code, base.message);
   }
 }
@@ -371,7 +376,11 @@ function retryDelayMs(err: unknown, attempt: number, random: () => number): numb
   } else {
     return null; // timeout, tipo não suportado, URL inválida, corpo grande, etc.
   }
-  if (retryAfter !== undefined) return Math.min(retryAfter, RETRY_MAX_DELAY_MS);
+  if (retryAfter !== undefined) {
+    // O servidor pediu mais do que toleramos esperar: retentar antes só martelaria o host.
+    if (retryAfter > RETRY_MAX_DELAY_MS) return null;
+    return retryAfter;
+  }
   // Backoff exponencial com jitter entre 50% e 100% do valor nominal.
   const nominal = RETRY_BASE_DELAY_MS * 2 ** attempt;
   return Math.min(Math.round(nominal * (0.5 + random() * 0.5)), RETRY_MAX_DELAY_MS);
@@ -435,11 +444,17 @@ export async function fetchPage(rawUrl: string, opts: FetchPageOptions = {}): Pr
     try {
       return await fetchWithRetry(alt, ctx);
     } catch (err) {
+      // 429 (e demais status já retentados) esgotados não caem para a URL original: é o mesmo host.
       const fallbackable =
-        (err instanceof HttpFailure && err.status >= 400 && err.status < 500) ||
+        (err instanceof HttpFailure &&
+          err.status >= 400 &&
+          err.status < 500 &&
+          !RETRY_STATUS_CODES.includes(err.status)) ||
         (err instanceof Web2mdError && err.code === "UNSUPPORTED_CONTENT_TYPE");
       if (!fallbackable) throw err;
     }
+    // O fallback tem orçamento próprio (totalMs segue como teto por URL).
+    return fetchWithRetry(url, { ...ctx, deadline: now() + totalMs });
   }
   return fetchWithRetry(url, ctx);
 }

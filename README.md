@@ -148,9 +148,11 @@ Falhas transitórias são repetidas automaticamente, até **2 vezes** (3 tentati
 - **HTTP** 429, 502, 503 e 504;
 - **Erros de rede** transitórios: `ECONNRESET`, `ETIMEDOUT`, `EAI_AGAIN` e `UND_ERR_SOCKET`.
 
-A espera segue backoff exponencial com jitter (base de 500 ms: cerca de 0,25–0,5 s antes da 2ª tentativa e 0,5–1 s antes da 3ª). Se o servidor enviar `Retry-After` (em segundos ou como data HTTP), ele é usado no lugar do backoff, limitado a 10 s.
+A espera segue backoff exponencial com jitter (base de 500 ms: cerca de 0,25–0,5 s antes da 2ª tentativa e 0,5–1 s antes da 3ª). Se o servidor enviar `Retry-After` (em segundos ou como data HTTP), ele é usado no lugar do backoff. Se pedir mais de 10 s, **não há nova tentativa**: a falha HTTP é devolvida na hora (com um aviso do tempo pedido pelo servidor), para não martelar um host que já pediu pausa.
 
 Não há retry para 4xx definitivos (404, 403 etc.), outros 5xx (como 500), timeout, conteúdo não suportado nem resposta acima do limite de tamanho. O tempo limite é **total**, somando todas as tentativas e esperas: se a próxima espera não couber no tempo restante (por exemplo, no prazo global de uma conversão em lote), a falha original é devolvida sem nova tentativa. Em caso de esgotamento, a mensagem de erro é a da última tentativa.
+
+Na regra de domínio (URL reescrita com fallback para a original), o fallback só ocorre para 4xx definitivos (como 404) e conteúdo não suportado; um 429/5xx esgotado não dispara a busca da URL original no mesmo host. O fallback tem orçamento de tempo próprio, com o mesmo teto por URL.
 
 ## Parâmetros
 
