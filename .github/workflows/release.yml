@@ -1,56 +1,92 @@
 name: Release
 
-# A cada push na master (ou execução manual): se a versão do package.json ainda não
-# tem tag v<versão>, roda build + testes, gera o .mcpb, publica no npm com provenance
-# e só então cria a tag e o GitHub Release com o bundle anexado.
-# Se a tag já existe, o workflow termina sem fazer nada (merges sem bump de versão).
-# Requer o secret NPM_TOKEN (token do npm com permissão de publicar no escopo).
+# A cada push na master (ou execução manual NA master): se a versão do package.json ainda
+# não tem tag v<versão>, o pipeline roda em 4 jobs com privilégios mínimos:
+#
+#   detect  -> lê a versão, confere a consistência e vê se a tag já existe (sem segredos)
+#   build   -> npm ci --ignore-scripts, build, testes, npm pack, .mcpb, SHA256SUMS e
+#              attestations (sem segredos; GITHUB_TOKEN só leitura)
+#   publish -> environment "npm-release" (revisor obrigatório); publica o tarball EXATO
+#              do build no npm com provenance; é o único passo com o NPM_TOKEN
+#   release -> cria a tag e o GitHub Release com o tarball, o .mcpb e o SHA256SUMS
+#
+# Se a tag já existe (merge sem bump de versão), só o `detect` roda e o resto é pulado.
+# Passos irreversíveis ficam por último e são idempotentes: o publish é pulado se a versão
+# já está no npm e o release reaproveita uma Release existente.
+# Requer o environment `npm-release` com o secret NPM_TOKEN (ver README, seção Publicação).
 on:
   push:
     branches:
       - master
   workflow_dispatch:
 
-permissions:
-  contents: write # criar a tag e o GitHub Release
-  id-token: write # provenance do npm
+# Nenhuma permissão por padrão; cada job declara só o que precisa.
+permissions: {}
 
 concurrency:
   group: release
   cancel-in-progress: false
 
 jobs:
-  release:
+  detect:
+    # Nunca publicar a partir de outra branch (workflow_dispatch roda em qualquer ref).
+    if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      release: ${{ steps.version.outputs.release }}
+      version: ${{ steps.version.outputs.version }}
+      name: ${{ steps.version.outputs.name }}
+      tag: ${{ steps.version.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
-
-      # Node 22: o Vitest 4 (rolldown) exige Node ^20.19 || >=22.12 para os testes; o pacote em si roda em >=20.18.1.
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          node-version: 22
-          cache: npm
-          registry-url: https://registry.npmjs.org
+          persist-credentials: false
 
       - name: Ler a versão e verificar se já foi lançada
         id: version
         run: |
+          set -euo pipefail
           VERSION="$(node -p "require('./package.json').version")"
           NAME="$(node -p "require('./package.json').name")"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "name=$NAME" >> "$GITHUB_OUTPUT"
-          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
-          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null 2>&1; then
+          # Os valores vão para $GITHUB_OUTPUT e depois para o shell dos outros jobs:
+          # só passam se tiverem o formato esperado (sem quebras de linha nem metacaracteres).
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'; then
+            echo "Versão fora do formato semver: inválida." >&2
+            exit 1
+          fi
+          if ! printf '%s' "$NAME" | grep -Eq '^(@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$'; then
+            echo "Nome do pacote fora do formato esperado." >&2
+            exit 1
+          fi
+          {
+            echo "version=$VERSION"
+            echo "name=$NAME"
+            echo "tag=v$VERSION"
+          } >> "$GITHUB_OUTPUT"
+          # ls-remote --exit-code: 0 = a tag existe; 2 = não existe; outro código = erro real.
+          set +e
+          git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null 2>&1
+          RC=$?
+          set -e
+          if [ "$RC" -eq 0 ]; then
             echo "A tag v$VERSION já existe: nada a lançar."
             echo "release=false" >> "$GITHUB_OUTPUT"
-          else
+          elif [ "$RC" -eq 2 ]; then
             echo "release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Falha ao consultar as tags do repositório (código $RC)." >&2
+            exit 1
           fi
 
       - name: Conferir que a versão é a mesma em todos os arquivos
         if: steps.version.outputs.release == 'true'
+        env:
+          PKG: ${{ steps.version.outputs.version }}
         run: |
-          PKG="${{ steps.version.outputs.version }}"
+          set -euo pipefail
           MANIFEST="$(node -p "require('./manifest.json').version")"
           SERVER="$(node -p "require('./server.json').version")"
           SERVER_PKG="$(node -p "require('./server.json').packages[0].version")"
@@ -62,36 +98,160 @@ jobs:
             fi
           done
 
-      - run: npm ci
-        if: steps.version.outputs.release == 'true'
-      - run: npm run build
-        if: steps.version.outputs.release == 'true'
-      - run: npm test
-        if: steps.version.outputs.release == 'true'
+  build:
+    needs: detect
+    if: github.ref == 'refs/heads/master' && needs.detect.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    # Sem segredos. id-token + attestations só para assinar a provenance dos artefatos
+    # (os passos de build/teste abaixo não recebem o token do GITHUB_TOKEN no .git/config).
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    outputs:
+      tarball: ${{ steps.pack.outputs.tarball }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Node 22: o Vitest 4 (rolldown) exige Node ^20.19 || >=22.12 para os testes; o pacote em si roda em >=20.18.1.
+      # Sem cache do npm de propósito: pipeline de release não restaura caches compartilhados.
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      - name: Instalar dependências (sem scripts de ciclo de vida)
+        run: npm ci --ignore-scripts
+
+      - name: Build
+        run: npm run build
+
+      - name: Testes
+        run: npm test
+
+      - name: Gerar o tarball do npm
+        id: pack
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          TARBALL="$(npm pack --ignore-scripts --silent --pack-destination release-assets | tail -n 1)"
+          if ! printf '%s' "$TARBALL" | grep -Eq '^[A-Za-z0-9._-]+\.tgz$'; then
+            echo "Nome de tarball inesperado." >&2
+            exit 1
+          fi
+          test -f "release-assets/$TARBALL"
+          echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
 
       - name: Gerar o bundle .mcpb
-        if: steps.version.outputs.release == 'true'
-        run: npm run mcpb:pack
+        run: npm run mcpb:pack -- "$GITHUB_WORKSPACE/release-assets/web2md.mcpb"
 
-      # Publica primeiro no npm (passo irreversível). Se a tag/Release falhar depois,
-      # uma nova execução pula esta etapa porque a versão já está no registro.
-      - name: Publicar no npm (com provenance)
-        if: steps.version.outputs.release == 'true'
+      - name: Gerar o SHA256SUMS
+        working-directory: release-assets
+        env:
+          TARBALL: ${{ steps.pack.outputs.tarball }}
         run: |
-          if npm view "${{ steps.version.outputs.name }}@${{ steps.version.outputs.version }}" version >/dev/null 2>&1; then
-            echo "A versão já está no npm: pulando o publish."
-          else
-            npm publish --provenance --access public
-          fi
+          set -euo pipefail
+          sha256sum "$TARBALL" web2md.mcpb > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Attestation de provenance (tarball e .mcpb)
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            release-assets/*.tgz
+            release-assets/web2md.mcpb
+
+      - name: Enviar os artefatos
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-assets
+          path: release-assets/
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: [detect, build]
+    if: github.ref == 'refs/heads/master' && needs.detect.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    # Revisor obrigatório + restrição à master configurados no environment (ver README).
+    environment: npm-release
+    permissions:
+      contents: read
+      id-token: write # provenance do npm
+    steps:
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Baixar os artefatos do build
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
+          path: release-assets
+
+      - name: Conferir os checksums
+        working-directory: release-assets
+        run: sha256sum --check SHA256SUMS
+
+      # Publica o tarball EXATO gerado no job build (sem reconstruir nem rodar scripts).
+      # Se a versão já está no npm (re-run após falha no release), pula.
+      - name: Publicar no npm (com provenance)
+        working-directory: release-assets
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Criar a tag e o GitHub Release com o .mcpb
-        if: steps.version.outputs.release == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PKG_NAME: ${{ needs.detect.outputs.name }}
+          PKG_VERSION: ${{ needs.detect.outputs.version }}
+          TARBALL: ${{ needs.build.outputs.tarball }}
         run: |
-          gh release create "${{ steps.version.outputs.tag }}" web2md.mcpb \
-            --target "$GITHUB_SHA" \
-            --title "${{ steps.version.outputs.tag }}" \
-            --generate-notes
+          set -euo pipefail
+          if OUT="$(npm view "$PKG_NAME@$PKG_VERSION" version 2>&1)"; then
+            echo "A versão já está no npm: pulando o publish."
+          elif printf '%s' "$OUT" | grep -q 'E404'; then
+            npm publish "./$TARBALL" --provenance --access public --ignore-scripts
+          else
+            echo "Falha ao consultar o npm (não foi um 404); abortando por segurança:" >&2
+            printf '%s\n' "$OUT" >&2
+            exit 1
+          fi
+
+  release:
+    needs: [detect, build, publish]
+    if: github.ref == 'refs/heads/master' && needs.detect.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # criar a tag e o GitHub Release
+    steps:
+      - name: Baixar os artefatos do build
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
+          path: release-assets
+
+      - name: Conferir os checksums
+        working-directory: release-assets
+        run: sha256sum --check SHA256SUMS
+
+      # Idempotente: se a Release já existe (re-run), só reenvia os arquivos com --clobber.
+      - name: Criar a tag e o GitHub Release
+        working-directory: release-assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.detect.outputs.tag }}
+          TARBALL: ${{ needs.build.outputs.tarball }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "A Release $TAG já existe: reenviando os arquivos."
+            gh release upload "$TAG" "$TARBALL" web2md.mcpb SHA256SUMS --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" "$TARBALL" web2md.mcpb SHA256SUMS \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "$TAG" \
+              --generate-notes
+          fi

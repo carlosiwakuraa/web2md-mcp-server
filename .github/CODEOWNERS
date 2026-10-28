@@ -1,0 +1,10 @@
+# Alterações nestes caminhos exigem revisão do dono (ative "Require review from Code Owners" no ruleset da master).
+/.github/workflows/ @carlosiwakuraa
+/.github/CODEOWNERS @carlosiwakuraa
+/.github/dependabot.yml @carlosiwakuraa
+/package.json @carlosiwakuraa
+/package-lock.json @carlosiwakuraa
+/scripts/ @carlosiwakuraa
+/manifest.json @carlosiwakuraa
+/server.json @carlosiwakuraa
+/SECURITY.md @carlosiwakuraa

@@ -283,9 +283,40 @@ O texto da resposta muda conforme o `dispatch` (manifesto, documentos inline ou 
 Passo a passo para mantenedores (a versão fica em `package.json`, `manifest.json`, `server.json` — em dois campos — e `SERVER_VERSION` em `src/constants.ts`):
 
 1. Atualize a versão nesses lugares, rode `npm install --package-lock-only` e confira `npm run build && npm test`.
-2. Faça o merge na `master`. **Não é preciso criar a tag à mão:** o workflow `.github/workflows/release.yml` roda a cada push na `master` e, se a tag `v<versão>` ainda não existe, confere que a versão é a mesma em todos os arquivos, roda build e testes, gera o `web2md.mcpb`, publica no npm com provenance e só então cria a tag e o GitHub Release com o bundle anexado. Se a tag já existe (merge sem bump de versão), ele termina sem fazer nada.
-3. O workflow precisa do secret `NPM_TOKEN` no repositório. Se o `npm publish` falhar, nada é criado e uma nova execução (Actions, Re-run ou `workflow_dispatch`) tenta de novo; se a falha for depois do publish, a nova execução pula o publish porque a versão já está no npm.
+2. Abra um PR e faça o merge na `master`. **Não é preciso criar a tag à mão:** o workflow `.github/workflows/release.yml` roda a cada push na `master` (e no `workflow_dispatch`, que só publica se executado na `master`) e, se a tag `v<versão>` ainda não existe, executa 4 jobs com privilégios mínimos:
+   - `detect`: lê a versão, confere que ela é a mesma em todos os arquivos e vê se a tag já existe. Se existir (merge sem bump de versão), o workflow termina aqui.
+   - `build`: sem segredos e com `GITHUB_TOKEN` somente leitura. Roda `npm ci --ignore-scripts`, build e testes, gera o tarball (`npm pack`), o `web2md.mcpb` e o `SHA256SUMS`, cria attestations de provenance (tarball e `.mcpb`) e envia tudo como artefato.
+   - `publish`: usa o environment `npm-release` (precisa da aprovação de um revisor) e publica no npm, com `--provenance`, o tarball exato gerado no `build`, sem rodar scripts. Só este passo recebe o `NPM_TOKEN`. Se a versão já está no npm, o publish é pulado.
+   - `release`: cria a tag e o GitHub Release com o tarball, o `web2md.mcpb` e o `SHA256SUMS`. Se a Release já existe, apenas reenvia os arquivos.
+3. Se algum job falhar, rode "Re-run" (ou `workflow_dispatch` na `master`): o publish é pulado quando a versão já está no npm e o release é idempotente.
 4. Publicação manual, se preferir: `npm login` e `npm publish` (o `prepublishOnly` limpa, compila e testa; `publishConfig.access` já é `public`).
+
+### Verificar um release
+
+Baixe os arquivos do GitHub Release e confira:
+
+```bash
+# checksums (tarball, .mcpb e SHA256SUMS na mesma pasta)
+sha256sum --check SHA256SUMS            # no macOS: shasum -a 256 --check SHA256SUMS
+
+# attestation de provenance (GitHub CLI)
+gh attestation verify web2md.mcpb --repo carlosiwakuraa/web2md-mcp-server
+gh attestation verify carlosiwakura-web2md-mcp-server-<versão>.tgz --repo carlosiwakuraa/web2md-mcp-server
+
+# pacote instalado a partir do npm: assinaturas e provenance do registro
+npm audit signatures
+```
+
+### Configurações do repositório (manual)
+
+O que o mantenedor precisa ativar no GitHub (Settings). O workflow não consegue aplicar nada disso sozinho:
+
+- **Ruleset da branch `master`:** exigir PR (com revisão de Code Owners, ver `.github/CODEOWNERS`), exigir status checks, bloquear force-push e exclusão da branch.
+- **Ruleset de tags `v*`:** bloquear atualização e exclusão de tags de versão, e restringir a criação (o `release` cria a tag com o `GITHUB_TOKEN`; inclua o GitHub Actions na lista de bypass, se a criação for restrita).
+- **Environment `npm-release`** (Settings > Environments): "Required reviewers" com o mantenedor, e "Deployment branches and tags" restrito à `master`. Sem este environment o job `publish` não tem acesso ao secret.
+- **Secret `NPM_TOKEN` apenas nesse environment:** use um token granular do npm (permissão de publicar só neste pacote/escopo, com expiração) e não o cadastre como secret do repositório.
+- **Migração futura para npm Trusted Publishing (OIDC):** depois que o pacote existir no npm (a primeira publicação precisa do token), configure o Trusted Publisher do pacote em npmjs.com (repositório `carlosiwakuraa/web2md-mcp-server`, workflow `release.yml`, environment `npm-release`), garanta npm >= 11.5.1 no job `publish` (por exemplo `npm install -g npm@^11.5.1`), remova o `NPM_TOKEN` e o `NODE_AUTH_TOKEN` e apague o secret.
+- Recomendados: Dependabot alerts e security updates, secret scanning com push protection, e "Private vulnerability reporting" (usado pelo `SECURITY.md`).
 
 ### MCP Registry (próximo passo)
 
