@@ -72,14 +72,18 @@ describe("handleBatch", () => {
   it("repassa os parâmetros ao pipeline (start_index 0, return_content true)", async () => {
     const run = vi.fn(okRun);
     await handleBatch(makeInput([u(1)], { mode: "full", include_links: true, max_chars: 2000 }), { run, save: fakeSave });
-    expect(run).toHaveBeenCalledWith({
-      url: u(1),
-      mode: "full",
-      max_chars: 2000,
-      start_index: 0,
-      include_links: true,
-      return_content: true,
-    });
+    // 2º argumento: AbortSignal do prazo do lote (cancelamento das conversões pendentes).
+    expect(run).toHaveBeenCalledWith(
+      {
+        url: u(1),
+        mode: "full",
+        max_chars: 2000,
+        start_index: 0,
+        include_links: true,
+        return_content: true,
+      },
+      expect.any(AbortSignal),
+    );
   });
 
   it("mantém a ordem original mesmo quando as conversões terminam fora de ordem", async () => {
@@ -383,6 +387,35 @@ describe("handleBatch", () => {
       await handleBatch(makeInput([u(1)]), { run: okRun, outputDir: dir, deadlineMs: 50 });
       await new Promise((r) => setTimeout(r, 500));
       expect(existsSync(previous)).toBe(true);
+    });
+
+    it("estourar o prazo aborta o AbortSignal das conversões pendentes (não só marca erro)", async () => {
+      const signals: AbortSignal[] = [];
+      const aborted: string[] = [];
+      const run = (input: ToolInput, signal?: AbortSignal) =>
+        new Promise<PipelineResult>((_, reject) => {
+          signals.push(signal!);
+          signal!.addEventListener("abort", () => {
+            aborted.push(input.url);
+            reject(new Error("cancelada"));
+          });
+        });
+      const result = await handleBatch(makeInput([u(1), u(2)]), { run, save: fakeSave, deadlineMs: 30, concurrency: 2 });
+      expect(signals).toHaveLength(2);
+      expect(signals.every((s) => s.aborted)).toBe(true);
+      expect(aborted.sort()).toEqual([u(1), u(2)]);
+      expect(structuredOf(result).items.every((i) => i.status === "error")).toBe(true);
+    });
+
+    it("sem estourar o prazo o signal não é abortado", async () => {
+      let seen: AbortSignal | undefined;
+      const run = async (input: ToolInput, signal?: AbortSignal) => {
+        seen = signal;
+        return okRun(input);
+      };
+      await handleBatch(makeInput([u(1)]), { run, save: fakeSave, deadlineMs: 5000 });
+      expect(seen).toBeDefined();
+      expect(seen!.aborted).toBe(false);
     });
 
     it("sem estourar o prazo não deixa timer pendente", async () => {

@@ -126,13 +126,16 @@ export async function handleFetchMarkdown(input: ToolInput): Promise<CallToolRes
   }
 }
 
+/** Mensagem devolvida ao modelo para qualquer erro que não seja Web2mdError. */
+export const UNEXPECTED_ERROR_MESSAGE = "Erro interno inesperado; veja o log do servidor";
+
 export function errorResult(err: unknown): CallToolResult {
   if (err instanceof Web2mdError) {
     return { isError: true, content: [{ type: "text", text: err.message }] };
   }
-  const detail = err instanceof Error ? err.message : String(err);
+  // O detalhe fica só no stderr: a mensagem devolvida ao modelo é genérica (pode haver caminhos/dados internos).
   console.error("[web2md] erro inesperado:", err);
-  return { isError: true, content: [{ type: "text", text: `Erro inesperado: ${detail}` }] };
+  return { isError: true, content: [{ type: "text", text: UNEXPECTED_ERROR_MESSAGE }] };
 }
 
 export function createServer(): McpServer {
@@ -179,10 +182,38 @@ export function createServer(): McpServer {
   return server;
 }
 
+/** Mensagem curta e sem segredos: nome + mensagem do erro (sem credenciais de URL), nunca o objeto inteiro. */
+function describeFatal(err: unknown): string {
+  const raw = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+  return raw.replace(/\/\/[^/\s@]*@/g, "//***@").slice(0, 300);
+}
+
+/**
+ * Erro não tratado = estado indefinido: registra em stderr e ENCERRA com código 1 (o cliente MCP
+ * reinicia o servidor), em vez de seguir rodando.
+ */
+export function installProcessGuards(): void {
+  let exiting = false;
+  const die = (kind: string, err: unknown): void => {
+    if (exiting) return;
+    exiting = true;
+    process.exitCode = 1;
+    const line = `[web2md] ${kind}: ${describeFatal(err)}; encerrando o servidor\n`;
+    // Última chance de sair mesmo que o stderr não drene.
+    setTimeout(() => process.exit(1), 1000).unref();
+    try {
+      process.stderr.write(line, () => process.exit(1));
+    } catch {
+      process.exit(1);
+    }
+  };
+  process.on("uncaughtException", (err) => die("uncaughtException", err));
+  process.on("unhandledRejection", (err) => die("unhandledRejection", err));
+}
+
 function main(): void {
   // Logs SEMPRE em stderr: stdout pertence ao protocolo MCP.
-  process.on("uncaughtException", (err) => console.error("[web2md] uncaughtException:", err));
-  process.on("unhandledRejection", (err) => console.error("[web2md] unhandledRejection:", err));
+  installProcessGuards();
   serveStdio(() => createServer(), {
     onerror: (err) => console.error("[web2md] erro de transporte:", err),
   });

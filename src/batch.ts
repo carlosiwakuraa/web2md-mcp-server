@@ -81,10 +81,14 @@ export async function handleBatch(input: BatchInput, deps: BatchDeps = {}): Prom
   const concurrency = deps.concurrency ?? BATCH_CONCURRENCY;
   const run =
     deps.run ??
-    ((runInput) =>
-      runPipeline(runInput, {
-        timeoutMs: Math.max(1, Math.min(FETCH_TIMEOUT_MS, startedAt + deadlineMs - Date.now())),
-      }));
+    ((runInput, signal) =>
+      runPipeline(
+        runInput,
+        { timeoutMs: Math.max(1, Math.min(FETCH_TIMEOUT_MS, startedAt + deadlineMs - Date.now())) },
+        { signal },
+      ));
+  // Estourado o prazo, aborta de fato as conversões pendentes (fila e workers), não só marca erro.
+  const abort = new AbortController();
   const save = deps.save ?? ((document, pageUrl, mode) => saveConversion(document, pageUrl, mode, outputDir));
 
   // Deduplica por URL sem fragmento, mantendo a ordem e a primeira ocorrência (como pedida).
@@ -124,14 +128,17 @@ export async function handleBatch(input: BatchInput, deps: BatchDeps = {}): Prom
 
   const convertOne = async (url: string): Promise<Converted> => {
     try {
-      const page = await run({
-        url,
-        mode: input.mode,
-        max_chars: input.max_chars,
-        start_index: 0,
-        include_links: input.include_links,
-        return_content: true,
-      });
+      const page = await run(
+        {
+          url,
+          mode: input.mode,
+          max_chars: input.max_chars,
+          start_index: 0,
+          include_links: input.include_links,
+          return_content: true,
+        },
+        abort.signal,
+      );
       // Conclusão tardia: não grava arquivo nem altera o resultado (já devolvido ao cliente).
       if (expired) return errorItem(url, input.mode, "Prazo do lote esgotado");
 
@@ -167,6 +174,7 @@ export async function handleBatch(input: BatchInput, deps: BatchDeps = {}): Prom
   const deadline = new Promise<void>((resolve) => {
     timer = setTimeout(() => {
       expired = true;
+      abort.abort();
       resolve();
     }, deadlineMs);
     timer.unref?.();
