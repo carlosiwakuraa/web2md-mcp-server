@@ -195,11 +195,11 @@ Além do texto, a resposta traz `structuredContent` com `{ url, source, total_ch
 
 ### Pasta de saída
 
-Toda conversão bem-sucedida é salva em `<tmpdir>/web2md/` (a pasta temporária do sistema). O arquivo sempre contém o **documento completo** (frontmatter + corpo), independentemente de `max_chars` e `start_index`, e `saved_path` no `structuredContent` traz o caminho absoluto.
+Toda conversão bem-sucedida é salva em `<tmpdir>/web2md-<uid>/` (pasta por usuário na temporária do sistema, modo 0700; antes era `<tmpdir>/web2md/`) ou em `$XDG_RUNTIME_DIR/web2md/` quando definido e válido. O arquivo sempre contém o **documento completo** (frontmatter + corpo), independentemente de `max_chars` e `start_index`, e `saved_path` no `structuredContent` traz o caminho absoluto.
 
-- Nome do arquivo: `<host>_<caminho>-<hash>.md`, com `.full` antes da extensão em `mode="full"`. O hash de 8 caracteres cobre a URL inteira (com query), então URLs diferentes não colidem.
+- Nome do arquivo: `<host>_<caminho>-<hash>.md`, com `.full` antes da extensão em `mode="full"`. O hash são 16 caracteres hex (64 bits do SHA-256) da URL inteira (com query); colisão acidental entre URLs diferentes é improvável, não impossível. Os arquivos são gravados de forma atômica (0600).
 - Reconverter a mesma URL e modo sobrescreve o arquivo (inclusive nas chamadas de paginação).
-- Para usar outra pasta, defina `WEB2MD_OUTPUT_DIR` (caminho absoluto recomendado). No Claude Desktop: `"env": { "WEB2MD_OUTPUT_DIR": "/caminho/para/output" }`.
+- Para usar outra pasta, defina `WEB2MD_OUTPUT_DIR` (caminho absoluto, ou começando com `~`; caminho relativo é recusado). Uma pasta sua com permissões abertas não é alterada (só gera aviso no `stderr`). Arquivos na pasta padrão com mais de 7 dias são apagados na primeira gravação de cada processo (`WEB2MD_RETENTION_DAYS`: dias de retenção, `0` desativa; em `WEB2MD_OUTPUT_DIR` só limpa se a variável estiver definida). No Claude Desktop: `"env": { "WEB2MD_OUTPUT_DIR": "/caminho/para/output" }`.
 - Se a gravação falhar (permissão, disco cheio), a conversão continua e volta normalmente, com `saved_path: null` e o motivo no `stderr`.
 
 ### Paginação

@@ -38,3 +38,10 @@ export const RETRY_MAX_DELAY_MS = 10_000;
 export const RETRY_STATUS_CODES: readonly number[] = [429, 502, 503, 504];
 /** Códigos de erro de rede transitórios que valem nova tentativa. */
 export const RETRY_NETWORK_CODES: readonly string[] = ["ECONNRESET", "ETIMEDOUT", "EAI_AGAIN", "UND_ERR_SOCKET"];
+
+/** Pasta de saída (segurança): retenção e teto do documento salvo. */
+/** Variável opcional: dias de retenção dos arquivos salvos (0 desativa a limpeza). */
+export const RETENTION_DAYS_ENV = "WEB2MD_RETENTION_DAYS";
+export const DEFAULT_RETENTION_DAYS = 7;
+/** Teto do documento salvo: acima do que o fetch consegue produzir (MAX_BODY_BYTES), só barra abuso. */
+export const MAX_SAVED_DOC_BYTES = 2 * MAX_BODY_BYTES;
