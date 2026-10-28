@@ -1,16 +1,23 @@
 name: Release
 
-# Ao empurrar uma tag v* (ex.: v1.3.0): build + testes, gera o .mcpb,
-# cria o GitHub Release com o bundle anexado e publica no npm com provenance.
-# Requer o secret NPM_TOKEN (token de automação do npm com permissão de publicar).
+# A cada push na master (ou execução manual): se a versão do package.json ainda não
+# tem tag v<versão>, roda build + testes, gera o .mcpb, publica no npm com provenance
+# e só então cria a tag e o GitHub Release com o bundle anexado.
+# Se a tag já existe, o workflow termina sem fazer nada (merges sem bump de versão).
+# Requer o secret NPM_TOKEN (token do npm com permissão de publicar no escopo).
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - master
+  workflow_dispatch:
 
 permissions:
-  contents: write # criar o GitHub Release
+  contents: write # criar a tag e o GitHub Release
   id-token: write # provenance do npm
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -24,27 +31,66 @@ jobs:
           cache: npm
           registry-url: https://registry.npmjs.org
 
-      - name: Conferir que a tag bate com a versão do package.json
+      - name: Ler a versão e verificar se já foi lançada
+        id: version
         run: |
-          PKG="v$(node -p "require('./package.json').version")"
-          if [ "$GITHUB_REF_NAME" != "$PKG" ]; then
-            echo "A tag $GITHUB_REF_NAME não bate com package.json ($PKG)" >&2
-            exit 1
+          VERSION="$(node -p "require('./package.json').version")"
+          NAME="$(node -p "require('./package.json').name")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null 2>&1; then
+            echo "A tag v$VERSION já existe: nada a lançar."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Conferir que a versão é a mesma em todos os arquivos
+        if: steps.version.outputs.release == 'true'
+        run: |
+          PKG="${{ steps.version.outputs.version }}"
+          MANIFEST="$(node -p "require('./manifest.json').version")"
+          SERVER="$(node -p "require('./server.json').version")"
+          SERVER_PKG="$(node -p "require('./server.json').packages[0].version")"
+          CONST="$(sed -n 's/.*SERVER_VERSION = "\(.*\)".*/\1/p' src/constants.ts)"
+          for v in "$MANIFEST" "$SERVER" "$SERVER_PKG" "$CONST"; do
+            if [ "$v" != "$PKG" ]; then
+              echo "Versões divergentes: package.json=$PKG manifest=$MANIFEST server.json=$SERVER/$SERVER_PKG constants=$CONST" >&2
+              exit 1
+            fi
+          done
+
       - run: npm ci
+        if: steps.version.outputs.release == 'true'
       - run: npm run build
+        if: steps.version.outputs.release == 'true'
       - run: npm test
+        if: steps.version.outputs.release == 'true'
 
       - name: Gerar o bundle .mcpb
+        if: steps.version.outputs.release == 'true'
         run: npm run mcpb:pack
 
-      - name: Criar o GitHub Release com o .mcpb
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "$GITHUB_REF_NAME" web2md.mcpb --title "$GITHUB_REF_NAME" --generate-notes
-
+      # Publica primeiro no npm (passo irreversível). Se a tag/Release falhar depois,
+      # uma nova execução pula esta etapa porque a versão já está no registro.
       - name: Publicar no npm (com provenance)
-        run: npm publish --provenance --access public
+        if: steps.version.outputs.release == 'true'
+        run: |
+          if npm view "${{ steps.version.outputs.name }}@${{ steps.version.outputs.version }}" version >/dev/null 2>&1; then
+            echo "A versão já está no npm: pulando o publish."
+          else
+            npm publish --provenance --access public
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Criar a tag e o GitHub Release com o .mcpb
+        if: steps.version.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" web2md.mcpb \
+            --target "$GITHUB_SHA" \
+            --title "${{ steps.version.outputs.tag }}" \
+            --generate-notes

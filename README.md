@@ -280,11 +280,11 @@ O texto da resposta muda conforme o `dispatch` (manifesto, documentos inline ou 
 
 ## Publicação
 
-Passo a passo para mantenedores (a versão fica em `package.json`, `manifest.json`, `server.json` e `SERVER_VERSION` em `src/constants.ts`):
+Passo a passo para mantenedores (a versão fica em `package.json`, `manifest.json`, `server.json` — em dois campos — e `SERVER_VERSION` em `src/constants.ts`):
 
-1. Atualize a versão nesses quatro lugares, rode `npm install --package-lock-only` e confira `npm run build && npm test`.
-2. Faça o commit e crie a tag: `git tag v1.3.0 && git push origin master v1.3.0`.
-3. O workflow `.github/workflows/release.yml` roda build e testes, gera o `web2md.mcpb`, cria o GitHub Release com o bundle anexado e publica no npm com provenance. Ele precisa do secret `NPM_TOKEN` (token de automação do npm) no repositório.
+1. Atualize a versão nesses lugares, rode `npm install --package-lock-only` e confira `npm run build && npm test`.
+2. Faça o merge na `master`. **Não é preciso criar a tag à mão:** o workflow `.github/workflows/release.yml` roda a cada push na `master` e, se a tag `v<versão>` ainda não existe, confere que a versão é a mesma em todos os arquivos, roda build e testes, gera o `web2md.mcpb`, publica no npm com provenance e só então cria a tag e o GitHub Release com o bundle anexado. Se a tag já existe (merge sem bump de versão), ele termina sem fazer nada.
+3. O workflow precisa do secret `NPM_TOKEN` no repositório. Se o `npm publish` falhar, nada é criado e uma nova execução (Actions, Re-run ou `workflow_dispatch`) tenta de novo; se a falha for depois do publish, a nova execução pula o publish porque a versão já está no npm.
 4. Publicação manual, se preferir: `npm login` e `npm publish` (o `prepublishOnly` limpa, compila e testa; `publishConfig.access` já é `public`).
 
 ### MCP Registry (próximo passo)
