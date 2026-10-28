@@ -1,5 +1,5 @@
 export const SERVER_NAME = "web2md-mcp-server";
-export const SERVER_VERSION = "1.3.0";
+export const SERVER_VERSION = "1.3.1";
 export const TOOL_NAME = "web2md_fetch_markdown";
 export const BATCH_TOOL_NAME = "web2md_fetch_markdown_batch";
 

@@ -6,6 +6,17 @@ A tool exposta se chama `web2md_fetch_markdown`. Ela não altera o servidor remo
 
 Desde a v1.2.0 há também a tool `web2md_fetch_markdown_batch`, que converte várias URLs de uma vez (ver [Conversão em lote](#conversão-em-lote-v120)).
 
+## Novidades da v1.3.1
+
+Versão de segurança (revisão baseada no OWASP Top 10:2025). Resumo do que muda para quem usa:
+
+- **Conversão isolada:** a conversão roda em `worker_thread` com timeout e limite de memória; uma página maliciosa não congela nem derruba mais o servidor. Limites: HTML de até 5 MB para conversão e corpo de até 10 MiB (ver [Limites](#limites)).
+- **Conteúdo não confiável:** o texto das páginas chega ao modelo dentro de um envelope identificado como dado, e o plano de subagentes do lote ganhou prompt-modelo e nomes neutros (`web2md-lote-N`).
+- **Rede:** opt-in para bloquear redes privadas (`WEB2MD_BLOCK_PRIVATE_NETWORKS`), com allowlist e blocklist; redirects seguidos manualmente (downgrade https→http recusado por padrão). O padrão continua permitindo a intranet.
+- **Pasta de saída:** `web2md-<uid>/` com modo 0700, gravação atômica, hash de 16 hex e limpeza por idade (arquivos antigos de `web2md/` ficam onde estão).
+- **Links e Markdown:** allowlist de esquemas em links e imagens, e correções de ReDoS e de injeção de Markdown/YAML.
+- **Distribuição:** release em jobs separados, com checksums e attestations; instalação com versão fixa e aviso sobre o pacote homônimo sem escopo.
+
 ## Novidades da v1.3.0
 
 - **Proxy corporativo:** respeita `HTTPS_PROXY`, `HTTP_PROXY` e `NO_PROXY` (ver [Configuração de rede](#configuração-de-rede)).
@@ -38,21 +49,21 @@ Requer Node 20.18.1 ou superior (o bundle .mcpb usa o Node embutido no Claude De
 Recomendado, com **versão fixa**:
 
 ```bash
-claude mcp add web2md -- npx -y @carlosiwakura/web2md-mcp-server@1.3.0
+claude mcp add web2md -- npx -y @carlosiwakura/web2md-mcp-server@1.3.1
 ```
 
-A versão fixa dá reprodutibilidade (todo início roda o mesmo código) e deixa a atualização sob o seu controle. Troque `1.3.0` pela versão desejada para atualizar. Sem versão (`npx -y @carlosiwakura/web2md-mcp-server`), cada início executa a última versão publicada, com dependências transitivas resolvidas na hora; é a alternativa se você prefere acompanhar as atualizações automaticamente.
+A versão fixa dá reprodutibilidade (todo início roda o mesmo código) e deixa a atualização sob o seu controle. Troque `1.3.1` pela versão desejada para atualizar. Sem versão (`npx -y @carlosiwakura/web2md-mcp-server`), cada início executa a última versão publicada, com dependências transitivas resolvidas na hora; é a alternativa se você prefere acompanhar as atualizações automaticamente.
 
 ### Claude Desktop e VS Code com npx
 
-Sem o bundle, adicione o servidor na configuração. Use a mesma versão fixa (troque `1.3.0` pela versão desejada). No Claude Desktop, em `claude_desktop_config.json`:
+Sem o bundle, adicione o servidor na configuração. Use a mesma versão fixa (troque `1.3.1` pela versão desejada). No Claude Desktop, em `claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "web2md": {
       "command": "npx",
-      "args": ["-y", "@carlosiwakura/web2md-mcp-server@1.3.0"]
+      "args": ["-y", "@carlosiwakura/web2md-mcp-server@1.3.1"]
     }
   }
 }
@@ -66,7 +77,7 @@ No VS Code, em `.vscode/mcp.json` (a chave raiz é `servers`):
     "web2md": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@carlosiwakura/web2md-mcp-server@1.3.0"]
+      "args": ["-y", "@carlosiwakura/web2md-mcp-server@1.3.1"]
     }
   }
 }
@@ -77,12 +88,12 @@ No VS Code, em `.vscode/mcp.json` (a chave raiz é `servers`):
 - **Pacote npm.** Confira o hash de integridade publicado e as assinaturas do registro (pacotes publicados pelo workflow de release trazem provenance):
 
   ```bash
-  npm view @carlosiwakura/web2md-mcp-server@1.3.0 dist.integrity
+  npm view @carlosiwakura/web2md-mcp-server@1.3.1 dist.integrity
   npm audit signatures   # num projeto que tenha o pacote instalado
   ```
 
   O provenance (qual commit e workflow geraram o pacote) aparece na [página do pacote no npm](https://www.npmjs.com/package/@carlosiwakura/web2md-mcp-server), na seção de proveniência da versão.
-- **Bundle .mcpb.** O `.mcpb` não é assinado. A partir da versão que incluir o workflow de release endurecido, o Release traz também o `SHA256SUMS` e uma attestation do build. Com o `web2md.mcpb` e o `SHA256SUMS` na mesma pasta:
+- **Bundle .mcpb.** O `.mcpb` não é assinado. A partir da v1.3.1 (a primeira lançada pelo workflow de release endurecido), o Release traz também o `SHA256SUMS` e uma attestation do build. Com o `web2md.mcpb` e o `SHA256SUMS` na mesma pasta:
 
   ```bash
   shasum -a 256 -c SHA256SUMS
