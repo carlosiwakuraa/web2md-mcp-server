@@ -204,6 +204,27 @@ describe("extractMain", () => {
     expect(r.root.ownerDocument).toBe(d);
   });
 
+  it("cai para o body quando o Readability descarta uma seção inteira de texto", () => {
+    const paras = (tag: string) => Array.from({ length: 6 }, (_, i) => `<p>${tag} ${i}. ${LONG}</p>`).join("");
+    // "extra-notes" casa com os candidatos improváveis do Readability, que descarta o bloco.
+    const d = cleaned(`<body><div class="post">${paras("ALFA")}</div>
+      <div class="extra-notes"><h2>Notas</h2>${paras("BETA")}</div></body>`);
+    const r = extractMain(d, "article");
+    expect(r.strategy).toBe("body");
+    expect(r.root.textContent).toContain("ALFA 3");
+    expect(r.root.textContent).toContain("BETA 3");
+  });
+
+  it("mantém o Readability quando ele só descarta navegação (links)", () => {
+    const paras = Array.from({ length: 6 }, (_, i) => `<p>Parágrafo ${i}. ${LONG}</p>`).join("");
+    const links = Array.from({ length: 12 }, (_, i) => `<li><a href="/p${i}">Página de navegação ${i}</a></li>`).join("");
+    const d = cleaned(`<body><div class="menu-lateral"><ul>${links}</ul></div>
+      <div class="content"><h1>Título do artigo</h1>${paras}</div></body>`);
+    const r = extractMain(d, "article");
+    expect(r.strategy).toBe("readability");
+    expect(r.root.textContent).not.toContain("Página de navegação");
+  });
+
   it("Readability preserva classes (language-x) com keepClasses", () => {
     const paras = Array.from({ length: 4 }, (_, i) => `<p>Parágrafo ${i}. ${LONG}</p>`).join("");
     const d = cleaned(`<body><div>${paras}<pre><code class="language-ts">const a = 1;</code></pre>${paras}</div></body>`);

@@ -7,6 +7,12 @@ import type { ExtractResult, Mode, PageMeta } from "../types.js";
 /** Abaixo disto, <main>/<article> é considerado "pouco texto" e a cadeia continua. */
 const MIN_CANDIDATE_CHARS = 100;
 
+/**
+ * Fração mínima do texto corrido (fora de links) do body que o Readability precisa reter para
+ * ser aceito; abaixo disso a extração é considerada com perda e usa-se o body.
+ */
+const MIN_READABILITY_RETENTION = 0.9;
+
 /** Avisos de conteúdo: nunca removidos por removeChrome (a conversão os transforma em `> [!NOTE]`). */
 const NOTICE_SELECTOR = [
   "aside.note",
@@ -119,6 +125,13 @@ function removeChrome(root: Element): void {
   }
 }
 
+/** Texto fora de links: o que sobra do body quando se tira a navegação (listas de links, menus). */
+function proseLength(el: Element): number {
+  let len = textLength(el);
+  for (const a of Array.from(el.querySelectorAll("a"))) len -= textLength(a);
+  return len;
+}
+
 function tryReadability(doc: Document): Element | null {
   try {
     const clone = doc.cloneNode(true) as Document;
@@ -160,7 +173,15 @@ export function extractMain(doc: Document, mode: Mode): ExtractResult {
   if (readable) {
     removeChrome(readable);
     const len = textLength(readable);
-    if (len >= MIN_CANDIDATE_CHARS && len > weakLen) return { root: readable, strategy: "readability" };
+    if (len >= MIN_CANDIDATE_CHARS && len > weakLen) {
+      // O Readability pode descartar seções inteiras de documentos longos. Se ele reteve pouco
+      // do texto corrido do body, perder conteúdo é pior que manter algum chrome: cai para o body.
+      removeChrome(doc.body);
+      const bodyProse = proseLength(doc.body);
+      if (proseLength(readable) >= bodyProse * MIN_READABILITY_RETENTION) {
+        return { root: readable, strategy: "readability" };
+      }
+    }
   }
 
   // Readability falhou (ou não melhorou): melhor entre o candidato fraco e o body.
