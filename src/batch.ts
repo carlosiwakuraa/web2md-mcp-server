@@ -38,13 +38,13 @@ async function runPool<T, R>(
 
 interface Converted {
   item: BatchItem;
-  /** Texto inline (documento completo truncado em max_chars). Fora do item/structuredContent: só vira saída no despacho inline. */
-  text: string | null;
+  /** Texto inline (documento completo truncado em max_chars) e marcador de truncamento. Fora do item/structuredContent: só vira saída no despacho inline. */
+  inline: { text: string; marker: string | null } | null;
 }
 
 function errorItem(url: string, mode: Mode, err: unknown): Converted {
   return {
-    text: null,
+    inline: null,
     item: {
       url,
       final_url: null,
@@ -130,7 +130,7 @@ export async function handleBatch(input: BatchInput, deps: BatchDeps = {}): Prom
 
       return {
         // Documento completo, nunca page.text (que carrega o marcador de start_index, inexistente no lote).
-        text: truncateInline(page.document, input.max_chars, savedPath),
+        inline: truncateInline(page.document, input.max_chars, savedPath),
         item: {
           url,
           final_url: page.url,
@@ -190,9 +190,9 @@ export async function handleBatch(input: BatchInput, deps: BatchDeps = {}): Prom
   const inlineDocs: InlineDoc[] = [];
   if (dispatch === "inline") {
     for (const c of converted) {
-      if (c.item.status !== "ok" || c.text === null || inlineSlugs.has(c.item.slug)) continue;
+      if (c.item.status !== "ok" || c.inline === null || inlineSlugs.has(c.item.slug)) continue;
       inlineSlugs.add(c.item.slug);
-      inlineDocs.push({ slug: c.item.slug, url: c.item.url, text: c.text });
+      inlineDocs.push({ slug: c.item.slug, url: c.item.url, text: c.inline.text, marker: c.inline.marker });
     }
   }
 

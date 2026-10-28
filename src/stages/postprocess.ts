@@ -1,5 +1,6 @@
 import { errors } from "../errors.js";
 import type { Frontmatter, LinkRecord, PageSlice } from "../types.js";
+import { SAVED_FILE_NOTICE } from "../untrusted.js";
 
 // ---------------------------------------------------------------- utilitários
 
@@ -229,7 +230,7 @@ export function renderDocument(fm: Frontmatter, body: string): string {
   const lines = fields
     .filter((f): f is [string, string] => f[1] !== undefined && f[1] !== "")
     .map(([k, v]) => `${k}: ${yamlValue(v)}`);
-  return `---\n${lines.join("\n")}\n---\n\n${body}`;
+  return `---\n${lines.join("\n")}\n---\n\n${SAVED_FILE_NOTICE}\n\n${body}`;
 }
 
 // ------------------------------------------------------------------- paginate
@@ -252,6 +253,11 @@ function chooseCut(doc: string, start: number, hardEnd: number, maxChars: number
   // Corte duro; não parte um par substituto UTF-16.
   if (hardEnd - 1 > start && isHighSurrogate(doc.charCodeAt(hardEnd - 1))) return hardEnd - 1;
   return hardEnd;
+}
+
+/** Marcador de continuação anexado à resposta truncada (fica FORA do envelope de conteúdo não confiável). */
+export function truncationMarker(startIndex: number, cut: number, total: number): string {
+  return `\n\n---\n[Conteúdo truncado: exibidos caracteres ${startIndex}–${cut} de ${total}. Para continuar, chame novamente com start_index=${cut}]\n`;
 }
 
 /**
@@ -283,6 +289,5 @@ export function paginate(doc: string, startIndex: number, maxChars: number): Pag
 
   const cut = chooseCut(doc, startIndex, hardEnd, maxChars);
   const chunk = doc.slice(startIndex, cut).replace(/\s+$/, "");
-  const marker = `\n\n---\n[Conteúdo truncado: exibidos caracteres ${startIndex}–${cut} de ${total}. Para continuar, chame novamente com start_index=${cut}]\n`;
-  return { text: chunk + marker, total_chars: total, next_start_index: cut };
+  return { text: chunk + truncationMarker(startIndex, cut, total), total_chars: total, next_start_index: cut };
 }

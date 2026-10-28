@@ -11,6 +11,7 @@ import {
   renderDocument,
   renderLinksSection,
 } from "../src/stages/postprocess.js";
+import { SAVED_FILE_NOTICE } from "../src/untrusted.js";
 
 describe("postProcess", () => {
   it("colapsa mais de duas linhas em branco em duas", () => {
@@ -164,7 +165,7 @@ describe("renderDocument", () => {
       "# Título\n",
     );
     expect(out).toBe(
-      "---\nurl: https://ex.com/docs/p\ncanonical: https://ex.com/docs/p\ntitle: Título\nlang: pt-BR\nfetched_at: 2026-10-20T22:32:00-03:00\nsource: html\n---\n\n# Título\n",
+      `---\nurl: https://ex.com/docs/p\ncanonical: https://ex.com/docs/p\ntitle: Título\nlang: pt-BR\nfetched_at: 2026-10-20T22:32:00-03:00\nsource: html\n---\n\n${SAVED_FILE_NOTICE}\n\n# Título\n`,
     );
   });
 
