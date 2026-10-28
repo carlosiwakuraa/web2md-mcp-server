@@ -6,6 +6,11 @@ A tool exposta se chama `web2md_fetch_markdown`. Ela não altera o servidor remo
 
 Desde a v1.2.0 há também a tool `web2md_fetch_markdown_batch`, que converte várias URLs de uma vez (ver [Conversão em lote](#conversão-em-lote-v120)).
 
+## Novidades da v1.4.0
+
+- **Grupos de abas:** abas de Docusaurus, VitePress, MkDocs Material e ARIA (`tablist`, como no Starlight) viram painéis em sequência, cada um precedido do rótulo em negrito (`**npm**`). As abas inativas, que vinham escondidas e se perdiam, agora entram na saída. O rótulo de linguagem solto do VitePress (`sh`, `js`) também deixou de aparecer.
+- **`mode="article"` sem perda de seções:** se o Readability descartar mais de 10% do texto corrido da página, o servidor usa o `<body>` (ver [Limitações conhecidas](#limitações-conhecidas)).
+
 ## Novidades da v1.3.1
 
 Versão de segurança (revisão baseada no OWASP Top 10:2025). Resumo do que muda para quem usa:
@@ -49,21 +54,21 @@ Requer Node 20.18.1 ou superior (o bundle .mcpb usa o Node embutido no Claude De
 Recomendado, com **versão fixa**:
 
 ```bash
-claude mcp add web2md -- npx -y @carlosiwakura/web2md-mcp-server@1.3.1
+claude mcp add web2md -- npx -y @carlosiwakura/web2md-mcp-server@1.4.0
 ```
 
-A versão fixa dá reprodutibilidade (todo início roda o mesmo código) e deixa a atualização sob o seu controle. Troque `1.3.1` pela versão desejada para atualizar. Sem versão (`npx -y @carlosiwakura/web2md-mcp-server`), cada início executa a última versão publicada, com dependências transitivas resolvidas na hora; é a alternativa se você prefere acompanhar as atualizações automaticamente.
+A versão fixa dá reprodutibilidade (todo início roda o mesmo código) e deixa a atualização sob o seu controle. Troque `1.4.0` pela versão desejada para atualizar. Sem versão (`npx -y @carlosiwakura/web2md-mcp-server`), cada início executa a última versão publicada, com dependências transitivas resolvidas na hora; é a alternativa se você prefere acompanhar as atualizações automaticamente.
 
 ### Claude Desktop e VS Code com npx
 
-Sem o bundle, adicione o servidor na configuração. Use a mesma versão fixa (troque `1.3.1` pela versão desejada). No Claude Desktop, em `claude_desktop_config.json`:
+Sem o bundle, adicione o servidor na configuração. Use a mesma versão fixa (troque `1.4.0` pela versão desejada). No Claude Desktop, em `claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "web2md": {
       "command": "npx",
-      "args": ["-y", "@carlosiwakura/web2md-mcp-server@1.3.1"]
+      "args": ["-y", "@carlosiwakura/web2md-mcp-server@1.4.0"]
     }
   }
 }
@@ -77,7 +82,7 @@ No VS Code, em `.vscode/mcp.json` (a chave raiz é `servers`):
     "web2md": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@carlosiwakura/web2md-mcp-server@1.3.1"]
+      "args": ["-y", "@carlosiwakura/web2md-mcp-server@1.4.0"]
     }
   }
 }
@@ -88,7 +93,7 @@ No VS Code, em `.vscode/mcp.json` (a chave raiz é `servers`):
 - **Pacote npm.** Confira o hash de integridade publicado e as assinaturas do registro (pacotes publicados pelo workflow de release trazem provenance):
 
   ```bash
-  npm view @carlosiwakura/web2md-mcp-server@1.3.1 dist.integrity
+  npm view @carlosiwakura/web2md-mcp-server@1.4.0 dist.integrity
   npm audit signatures   # num projeto que tenha o pacote instalado
   ```
 

@@ -1,6 +1,6 @@
 {
   "name": "@carlosiwakura/web2md-mcp-server",
-  "version": "1.3.1",
+  "version": "1.4.0",
   "mcpName": "io.github.carlosiwakuraa/web2md-mcp-server",
   "description": "MCP server that fetches a URL locally and returns faithful GFM Markdown",
   "keywords": [
