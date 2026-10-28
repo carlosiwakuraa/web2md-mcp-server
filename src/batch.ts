@@ -1,3 +1,5 @@
+import { lstat, rm } from "node:fs/promises";
+import path from "node:path";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { decideDispatch, planGroups, renderBatchText, slugFromFileName, truncateInline } from "./batch-plan.js";
 import type { BatchDeps, BatchItem, BatchStructured, InlineDoc } from "./batch-types.js";
@@ -98,11 +100,24 @@ export async function handleBatch(input: BatchInput, deps: BatchDeps = {}): Prom
   // URLs distintas que convergem (redirect) para o mesmo arquivo compartilham uma única gravação.
   const saves = new Map<string, Promise<string>>();
 
-  const saveOnce = (slug: string, document: string, pageUrl: string): Promise<string> => {
-    let pending = saves.get(slug);
+  // Idempotente por arquivo de destino (nome derivado da URL final + modo, hash de 64 bits).
+  const saveOnce = (document: string, pageUrl: string): Promise<string> => {
+    const key = outputFileName(pageUrl, input.mode);
+    let pending = saves.get(key);
     if (!pending) {
-      pending = save(document, pageUrl, input.mode);
-      saves.set(slug, pending);
+      // Depois do prazo nenhuma gravação nova começa.
+      if (expired) return Promise.reject(new Error("Prazo do lote esgotado"));
+      pending = (async () => {
+        // Só o saver padrão: sabemos o destino e se o arquivo já existia antes desta gravação.
+        const target = deps.save ? null : path.join(outputDir, key);
+        const existed = target ? await lstat(target).then(() => true, () => false) : true;
+        const saved = await save(document, pageUrl, input.mode);
+        // Gravação iniciada no prazo que terminou depois: o item foi descartado, então o arquivo
+        // recém-criado é órfão (um arquivo que já existia é de outra chamada e fica).
+        if (expired && target && !existed) await rm(saved, { force: true }).catch(() => undefined);
+        return saved;
+      })();
+      saves.set(key, pending);
     }
     return pending;
   };
@@ -123,7 +138,7 @@ export async function handleBatch(input: BatchInput, deps: BatchDeps = {}): Prom
       const slug = slugFromFileName(outputFileName(page.url, input.mode));
       let savedPath: string;
       try {
-        savedPath = await saveOnce(slug, page.document, page.url);
+        savedPath = await saveOnce(page.document, page.url);
       } catch (saveErr) {
         throw new Error(`Convertida, mas não foi possível salvar o arquivo: ${errorMessage(saveErr)}`);
       }

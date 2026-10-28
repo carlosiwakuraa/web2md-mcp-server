@@ -265,7 +265,7 @@ describe("servidor MCP (stdio, spec 2026-07-28)", () => {
     const sc = r.result!.structuredContent;
     expect(sc.next_start_index).not.toBeNull();
     expect(path.dirname(sc.saved_path)).toBe(OUTPUT_DIR);
-    expect(path.basename(sc.saved_path)).toMatch(/^127\.0\.0\.1_doc\.md-[0-9a-f]{8}\.md$/);
+    expect(path.basename(sc.saved_path)).toMatch(/^127\.0\.0\.1_doc\.md-[0-9a-f]{16}\.md$/);
 
     const saved = readFileSync(sc.saved_path, "utf8");
     expect(saved.length).toBe(sc.total_chars);
@@ -330,7 +330,7 @@ describe("servidor MCP (stdio, spec 2026-07-28)", () => {
     const inst = sc.headings.find((h: any) => h.slug === "instalacao");
     expect(saved.slice(inst.start, inst.end).startsWith("## Instalação")).toBe(true);
     expect(saved.slice(inst.start, inst.end)).toContain("### Requisitos");
-    expect(path.basename(sc.saved_path)).toMatch(/^127\.0\.0\.1_guide\.md-[0-9a-f]{8}\.md$/);
+    expect(path.basename(sc.saved_path)).toMatch(/^127\.0\.0\.1_guide\.md-[0-9a-f]{16}\.md$/);
   });
 
   it("section por slug, por texto e por fragmento da URL; a seção inclui subseções e bloco de código inteiro", async () => {
