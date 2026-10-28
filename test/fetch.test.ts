@@ -225,7 +225,8 @@ describe("fetchPage: rede e erros", () => {
     const fetchImpl = (async () => {
       throw new TypeError("fetch failed", { cause: Object.assign(new Error("dns"), { code: "ENOTFOUND" }) });
     }) as typeof fetch;
-    const e = await expectCode(fetchPage("https://nao-existe.invalid/", { fetchImpl }), "NETWORK_ERROR");
+    // env vazio: com HTTPS_PROXY no ambiente do runner, a falha seria atribuída ao proxy (PROXY_ERROR).
+    const e = await expectCode(fetchPage("https://nao-existe.invalid/", { fetchImpl, env: {} }), "NETWORK_ERROR");
     expect(e.message).toContain("ENOTFOUND");
   });
 

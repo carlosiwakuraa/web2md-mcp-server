@@ -12,7 +12,7 @@
  * Falhas viram Web2mdError tratável; nada aqui derruba o processo principal (o evento 'error' dos
  * workers sempre tem listener).
  */
-import { Worker, type ResourceLimits } from "node:worker_threads";
+import { Worker, type ResourceLimits, type WorkerOptions } from "node:worker_threads";
 import {
   CONVERSION_MAX_OLD_GEN_MB,
   CONVERSION_TIMEOUT_MS,
@@ -43,16 +43,12 @@ interface Slot {
   idleTimer?: ReturnType<typeof setTimeout>;
 }
 
-/** Em dev (.ts) o worker precisa do loader tsx; no build (.js) não precisa de nada. */
-function execArgvFor(workerUrl: URL): string[] | undefined {
-  if (!workerUrl.pathname.endsWith(".ts")) return undefined;
-  let tsx = "tsx";
-  try {
-    tsx = import.meta.resolve("tsx");
-  } catch {
-    // mantém "tsx": resolvido a partir do cwd
-  }
-  return ["--import", tsx];
+/** Em dev (.ts) o worker sobe por um bootstrap que registra o tsx; no build (.js) sobe direto. */
+const TS_BOOTSTRAP = new URL("./ts-bootstrap.mjs", import.meta.url);
+
+function workerEntry(workerUrl: URL): Pick<WorkerOptions, "workerData"> & { url: URL } {
+  if (!workerUrl.pathname.endsWith(".ts")) return { url: workerUrl };
+  return { url: TS_BOOTSTRAP, workerData: { tsEntry: workerUrl.href } };
 }
 
 function fromPayload(payload: WorkerErrorPayload): Error {
@@ -114,9 +110,10 @@ export class WorkerPool<Req, Res> {
   }
 
   private spawn(): Slot {
-    const worker = new Worker(this.opts.workerUrl, {
+    const { url, workerData } = workerEntry(this.opts.workerUrl);
+    const worker = new Worker(url, {
       resourceLimits: this.opts.resourceLimits,
-      execArgv: execArgvFor(this.opts.workerUrl),
+      workerData,
       // stdout do worker NUNCA vai ao stdout do processo (pertence ao protocolo MCP): é descartado.
       stdout: true,
       stderr: false,
