@@ -9,18 +9,21 @@ export type BatchGroup = z.infer<typeof BatchGroupSchema>;
 export type BatchStructured = z.infer<typeof BatchOutputSchema>;
 export type BatchDispatch = BatchStructured["dispatch"];
 
-/** Documento a exibir inline (já truncado por max_chars). */
+/** Documento a exibir inline. */
 export interface InlineDoc {
   slug: string;
   url: string;
+  /** Corpo já truncado em max_chars (não confiável: vai dentro do envelope). */
   text: string;
+  /** Marcador de truncamento do servidor (vai fora do envelope), ou null. */
+  marker: string | null;
 }
 
 export type PipelineResult = FullPipelineResult;
 
 export interface BatchDeps {
-  /** Padrão: runPipeline com timeout limitado ao tempo restante do prazo do lote. */
-  run?: (input: ToolInput) => Promise<PipelineResult>;
+  /** Padrão: runPipeline com timeout limitado ao tempo restante do prazo do lote. `signal` aborta ao estourar o prazo. */
+  run?: (input: ToolInput, signal?: AbortSignal) => Promise<PipelineResult>;
   /** Padrão: saveConversion gravando em `outputDir`. */
   save?: (document: string, pageUrl: string, mode: Mode) => Promise<string>;
   /** Padrão: BATCH_CONCURRENCY. */

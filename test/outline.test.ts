@@ -297,7 +297,7 @@ describe("runPipeline: section", () => {
   it("por slug: frontmatter com section, heading + subseções, sem blocos cortados", async () => {
     const r = await run({ section: "instalacao" });
     expect(r.text).toMatch(
-      /^---\nurl: [^\n]*\n[\s\S]*source: native-markdown\nsection: Instalação\nsection_slug: instalacao\n---\n\n## Instalação\n/,
+      /^---\nurl: [^\n]*\n[\s\S]*source: native-markdown\nsection: Instalação\nsection_slug: instalacao\n---\n\n<!-- web2md: [^\n]*-->\n\n## Instalação\n/,
     );
     expect(r.text).toContain("# comentário que não é heading\nnpm i\n```");
     expect(r.text).toContain("### Requisitos\n\nNode 20.");

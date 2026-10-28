@@ -1,3 +1,5 @@
+import { lstat, rm } from "node:fs/promises";
+import path from "node:path";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { decideDispatch, planGroups, renderBatchText, slugFromFileName, truncateInline } from "./batch-plan.js";
 import type { BatchDeps, BatchItem, BatchStructured, InlineDoc } from "./batch-types.js";
@@ -38,13 +40,13 @@ async function runPool<T, R>(
 
 interface Converted {
   item: BatchItem;
-  /** Texto inline (documento completo truncado em max_chars). Fora do item/structuredContent: só vira saída no despacho inline. */
-  text: string | null;
+  /** Texto inline (documento completo truncado em max_chars) e marcador de truncamento. Fora do item/structuredContent: só vira saída no despacho inline. */
+  inline: { text: string; marker: string | null } | null;
 }
 
 function errorItem(url: string, mode: Mode, err: unknown): Converted {
   return {
-    text: null,
+    inline: null,
     item: {
       url,
       final_url: null,
@@ -79,10 +81,14 @@ export async function handleBatch(input: BatchInput, deps: BatchDeps = {}): Prom
   const concurrency = deps.concurrency ?? BATCH_CONCURRENCY;
   const run =
     deps.run ??
-    ((runInput) =>
-      runPipeline(runInput, {
-        timeoutMs: Math.max(1, Math.min(FETCH_TIMEOUT_MS, startedAt + deadlineMs - Date.now())),
-      }));
+    ((runInput, signal) =>
+      runPipeline(
+        runInput,
+        { timeoutMs: Math.max(1, Math.min(FETCH_TIMEOUT_MS, startedAt + deadlineMs - Date.now())) },
+        { signal },
+      ));
+  // Estourado o prazo, aborta de fato as conversões pendentes (fila e workers), não só marca erro.
+  const abort = new AbortController();
   const save = deps.save ?? ((document, pageUrl, mode) => saveConversion(document, pageUrl, mode, outputDir));
 
   // Deduplica por URL sem fragmento, mantendo a ordem e a primeira ocorrência (como pedida).
@@ -98,39 +104,55 @@ export async function handleBatch(input: BatchInput, deps: BatchDeps = {}): Prom
   // URLs distintas que convergem (redirect) para o mesmo arquivo compartilham uma única gravação.
   const saves = new Map<string, Promise<string>>();
 
-  const saveOnce = (slug: string, document: string, pageUrl: string): Promise<string> => {
-    let pending = saves.get(slug);
+  // Idempotente por arquivo de destino (nome derivado da URL final + modo, hash de 64 bits).
+  const saveOnce = (document: string, pageUrl: string): Promise<string> => {
+    const key = outputFileName(pageUrl, input.mode);
+    let pending = saves.get(key);
     if (!pending) {
-      pending = save(document, pageUrl, input.mode);
-      saves.set(slug, pending);
+      // Depois do prazo nenhuma gravação nova começa.
+      if (expired) return Promise.reject(new Error("Prazo do lote esgotado"));
+      pending = (async () => {
+        // Só o saver padrão: sabemos o destino e se o arquivo já existia antes desta gravação.
+        const target = deps.save ? null : path.join(outputDir, key);
+        const existed = target ? await lstat(target).then(() => true, () => false) : true;
+        const saved = await save(document, pageUrl, input.mode);
+        // Gravação iniciada no prazo que terminou depois: o item foi descartado, então o arquivo
+        // recém-criado é órfão (um arquivo que já existia é de outra chamada e fica).
+        if (expired && target && !existed) await rm(saved, { force: true }).catch(() => undefined);
+        return saved;
+      })();
+      saves.set(key, pending);
     }
     return pending;
   };
 
   const convertOne = async (url: string): Promise<Converted> => {
     try {
-      const page = await run({
-        url,
-        mode: input.mode,
-        max_chars: input.max_chars,
-        start_index: 0,
-        include_links: input.include_links,
-        return_content: true,
-      });
+      const page = await run(
+        {
+          url,
+          mode: input.mode,
+          max_chars: input.max_chars,
+          start_index: 0,
+          include_links: input.include_links,
+          return_content: true,
+        },
+        abort.signal,
+      );
       // Conclusão tardia: não grava arquivo nem altera o resultado (já devolvido ao cliente).
       if (expired) return errorItem(url, input.mode, "Prazo do lote esgotado");
 
       const slug = slugFromFileName(outputFileName(page.url, input.mode));
       let savedPath: string;
       try {
-        savedPath = await saveOnce(slug, page.document, page.url);
+        savedPath = await saveOnce(page.document, page.url);
       } catch (saveErr) {
         throw new Error(`Convertida, mas não foi possível salvar o arquivo: ${errorMessage(saveErr)}`);
       }
 
       return {
         // Documento completo, nunca page.text (que carrega o marcador de start_index, inexistente no lote).
-        text: truncateInline(page.document, input.max_chars, savedPath),
+        inline: truncateInline(page.document, input.max_chars, savedPath),
         item: {
           url,
           final_url: page.url,
@@ -152,6 +174,7 @@ export async function handleBatch(input: BatchInput, deps: BatchDeps = {}): Prom
   const deadline = new Promise<void>((resolve) => {
     timer = setTimeout(() => {
       expired = true;
+      abort.abort();
       resolve();
     }, deadlineMs);
     timer.unref?.();
@@ -190,9 +213,9 @@ export async function handleBatch(input: BatchInput, deps: BatchDeps = {}): Prom
   const inlineDocs: InlineDoc[] = [];
   if (dispatch === "inline") {
     for (const c of converted) {
-      if (c.item.status !== "ok" || c.text === null || inlineSlugs.has(c.item.slug)) continue;
+      if (c.item.status !== "ok" || c.inline === null || inlineSlugs.has(c.item.slug)) continue;
       inlineSlugs.add(c.item.slug);
-      inlineDocs.push({ slug: c.item.slug, url: c.item.url, text: c.text });
+      inlineDocs.push({ slug: c.item.slug, url: c.item.url, text: c.inline.text, marker: c.inline.marker });
     }
   }
 

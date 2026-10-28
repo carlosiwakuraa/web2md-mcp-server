@@ -1,5 +1,5 @@
 import * as z from "zod/v4";
-import { DEFAULT_MAX_CHARS } from "../constants.js";
+import { DEFAULT_MAX_CHARS, MAX_URL_LENGTH } from "../constants.js";
 
 export const MIN_MAX_CHARS = 100;
 export const MAX_MAX_CHARS = 500_000;
@@ -7,6 +7,7 @@ export const MAX_MAX_CHARS = 500_000;
 /** Validador de URL http(s) compartilhado pela tool de URL única e pela de lote. */
 export const httpUrl = z
   .string()
+  .max(MAX_URL_LENGTH, { error: `A URL excede o limite de ${MAX_URL_LENGTH} caracteres`, abort: true })
   .url()
   .refine((value) => /^https?:\/\//i.test(value), {
     message: "A URL deve começar com http:// ou https://",

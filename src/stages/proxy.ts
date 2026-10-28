@@ -1,6 +1,8 @@
+import type net from "node:net";
 import { Agent, Dispatcher, ProxyAgent } from "undici";
 import { effectiveEnv } from "../env.js";
 import { errors } from "../errors.js";
+import { lookupId, type GuardedLookup } from "./netpolicy.js";
 
 // ---------------------------------------------------------------- configuração
 
@@ -190,11 +192,18 @@ export function redactSecrets(text: string, proxyEnv?: ProxyEnv): string {
  * mudam de esquema ou caem em NO_PROXY usam o caminho correto.
  */
 class ProxyRouter extends Dispatcher {
-  private readonly direct = new Agent();
+  private readonly direct: Agent;
   private readonly proxies = new Map<string, ProxyAgent>();
 
-  constructor(private readonly proxyEnv: ProxyEnv) {
+  /** `guardedLookup`: política de rede ativa; a conexão direta só aceita destinos cujo IP resolvido passe nela. */
+  constructor(
+    private readonly proxyEnv: ProxyEnv,
+    guardedLookup?: GuardedLookup,
+  ) {
     super();
+    this.direct = guardedLookup
+      ? new Agent({ connect: { lookup: guardedLookup as unknown as net.LookupFunction } })
+      : new Agent();
   }
 
   private agentFor(origin: URL): Dispatcher {
@@ -247,13 +256,22 @@ class ProxyRouter extends Dispatcher {
 
 const routers = new Map<string, ProxyRouter>();
 
-/** Dispatcher (cacheado por configuração) para o ambiente de proxy; undefined se não há proxy configurado. */
-export function getProxyDispatcher(proxyEnv: ProxyEnv): Dispatcher | undefined {
+/**
+ * Dispatcher (cacheado por configuração) para o ambiente de proxy; undefined se não há proxy configurado.
+ * Com `guardedLookup`, as conexões diretas (NO_PROXY) validam o IP resolvido; as feitas via proxy não podem
+ * ser validadas localmente, pois quem resolve o nome é o proxy.
+ */
+export function getProxyDispatcher(proxyEnv: ProxyEnv, guardedLookup?: GuardedLookup): Dispatcher | undefined {
   if (!hasProxyConfigured(proxyEnv)) return undefined;
-  const key = JSON.stringify([proxyEnv.httpProxy, proxyEnv.httpsProxy, proxyEnv.noProxy]);
+  const key = JSON.stringify([
+    proxyEnv.httpProxy,
+    proxyEnv.httpsProxy,
+    proxyEnv.noProxy,
+    guardedLookup ? lookupId(guardedLookup) : null,
+  ]);
   let router = routers.get(key);
   if (!router) {
-    router = new ProxyRouter(proxyEnv);
+    router = new ProxyRouter(proxyEnv, guardedLookup);
     routers.set(key, router);
   }
   return router;

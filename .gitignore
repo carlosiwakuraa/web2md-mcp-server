@@ -30,3 +30,7 @@ npm-debug.log*
 # MCP Bundle
 *.mcpb
 .mcpb-staging/
+
+# Claude Code (config local)
+.claude/
+release-assets/

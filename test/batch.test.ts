@@ -1,8 +1,9 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { handleBatch } from "../src/batch.js";
+import { saveConversion } from "../src/output.js";
 import { runPipeline } from "../src/pipeline.js";
 import type { BatchStructured, PipelineResult } from "../src/batch-types.js";
 import type { BatchInput } from "../src/schemas/batch-input.js";
@@ -10,6 +11,10 @@ import { BatchInputSchema } from "../src/schemas/batch-input.js";
 import type { ToolInput } from "../src/types.js";
 
 vi.mock("../src/pipeline.js", () => ({ runPipeline: vi.fn() }));
+vi.mock("../src/output.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/output.js")>();
+  return { ...actual, saveConversion: vi.fn(actual.saveConversion) };
+});
 
 const tmp = mkdtempSync(path.join(tmpdir(), "web2md-batch-test-"));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
@@ -67,14 +72,18 @@ describe("handleBatch", () => {
   it("repassa os parâmetros ao pipeline (start_index 0, return_content true)", async () => {
     const run = vi.fn(okRun);
     await handleBatch(makeInput([u(1)], { mode: "full", include_links: true, max_chars: 2000 }), { run, save: fakeSave });
-    expect(run).toHaveBeenCalledWith({
-      url: u(1),
-      mode: "full",
-      max_chars: 2000,
-      start_index: 0,
-      include_links: true,
-      return_content: true,
-    });
+    // 2º argumento: AbortSignal do prazo do lote (cancelamento das conversões pendentes).
+    expect(run).toHaveBeenCalledWith(
+      {
+        url: u(1),
+        mode: "full",
+        max_chars: 2000,
+        start_index: 0,
+        include_links: true,
+        return_content: true,
+      },
+      expect.any(AbortSignal),
+    );
   });
 
   it("mantém a ordem original mesmo quando as conversões terminam fora de ordem", async () => {
@@ -104,7 +113,7 @@ describe("handleBatch", () => {
     expect(failed.url).toBe(u(2));
     expect(failed.final_url).toBeNull();
     expect(failed.saved_path).toBeNull();
-    expect(failed.slug).toMatch(/^exemplo\.com_p2-[0-9a-f]{8}$/);
+    expect(failed.slug).toMatch(/^exemplo\.com_p2-[0-9a-f]{16}$/);
   });
 
   it("devolve isError true (com texto e structuredContent) quando nenhuma URL converte", async () => {
@@ -353,6 +362,62 @@ describe("handleBatch", () => {
       expect(result.isError).toBe(true);
     });
 
+    it("gravação iniciada no prazo que termina depois: o arquivo órfão novo é removido", async () => {
+      const dir = mkdtempSync(path.join(tmp, "orfao-"));
+      const actual = await vi.importActual<typeof import("../src/output.js")>("../src/output.js");
+      vi.mocked(saveConversion).mockImplementationOnce(async (...args) => {
+        await new Promise((r) => setTimeout(r, 200));
+        return actual.saveConversion(...args);
+      });
+      const s = structuredOf(await handleBatch(makeInput([u(1)]), { run: okRun, outputDir: dir, deadlineMs: 50 }));
+      expect(s.items[0]!.status).toBe("error");
+      expect(s.items[0]!.saved_path).toBeNull();
+      await new Promise((r) => setTimeout(r, 500));
+      expect(readdirSync(dir)).toEqual([]);
+    });
+
+    it("gravação tardia sobre arquivo que já existia não apaga o arquivo anterior", async () => {
+      const dir = mkdtempSync(path.join(tmp, "existente-"));
+      const actual = await vi.importActual<typeof import("../src/output.js")>("../src/output.js");
+      const previous = await actual.saveConversion("# antigo", u(1), "article", dir);
+      vi.mocked(saveConversion).mockImplementationOnce(async (...args) => {
+        await new Promise((r) => setTimeout(r, 200));
+        return actual.saveConversion(...args);
+      });
+      await handleBatch(makeInput([u(1)]), { run: okRun, outputDir: dir, deadlineMs: 50 });
+      await new Promise((r) => setTimeout(r, 500));
+      expect(existsSync(previous)).toBe(true);
+    });
+
+    it("estourar o prazo aborta o AbortSignal das conversões pendentes (não só marca erro)", async () => {
+      const signals: AbortSignal[] = [];
+      const aborted: string[] = [];
+      const run = (input: ToolInput, signal?: AbortSignal) =>
+        new Promise<PipelineResult>((_, reject) => {
+          signals.push(signal!);
+          signal!.addEventListener("abort", () => {
+            aborted.push(input.url);
+            reject(new Error("cancelada"));
+          });
+        });
+      const result = await handleBatch(makeInput([u(1), u(2)]), { run, save: fakeSave, deadlineMs: 30, concurrency: 2 });
+      expect(signals).toHaveLength(2);
+      expect(signals.every((s) => s.aborted)).toBe(true);
+      expect(aborted.sort()).toEqual([u(1), u(2)]);
+      expect(structuredOf(result).items.every((i) => i.status === "error")).toBe(true);
+    });
+
+    it("sem estourar o prazo o signal não é abortado", async () => {
+      let seen: AbortSignal | undefined;
+      const run = async (input: ToolInput, signal?: AbortSignal) => {
+        seen = signal;
+        return okRun(input);
+      };
+      await handleBatch(makeInput([u(1)]), { run, save: fakeSave, deadlineMs: 5000 });
+      expect(seen).toBeDefined();
+      expect(seen!.aborted).toBe(false);
+    });
+
     it("sem estourar o prazo não deixa timer pendente", async () => {
       vi.useFakeTimers();
       await handleBatch(makeInput([u(1)]), { run: okRun, save: fakeSave, deadlineMs: 5000 });
@@ -381,6 +446,6 @@ describe("handleBatch", () => {
     const s = structuredOf(await handleBatch(makeInput([u(1)]), { run, save: fakeSave }));
     expect(s.items[0]!.url).toBe(u(1));
     expect(s.items[0]!.final_url).toBe("https://exemplo.com/destino");
-    expect(s.items[0]!.slug).toMatch(/^exemplo\.com_destino-[0-9a-f]{8}$/);
+    expect(s.items[0]!.slug).toMatch(/^exemplo\.com_destino-[0-9a-f]{16}$/);
   });
 });
