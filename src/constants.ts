@@ -8,7 +8,15 @@ export const OUTPUT_DIR_ENV = "WEB2MD_OUTPUT_DIR";
 
 export const FETCH_TIMEOUT_MS = 30_000;
 export const DEFAULT_MAX_CHARS = 50_000;
-export const MAX_BODY_BYTES = 20 * 1024 * 1024;
+/** Teto padrão do corpo baixado; WEB2MD_MAX_BODY_MB (1–50) o sobrescreve. */
+export const MAX_BODY_BYTES = 10 * 1024 * 1024;
+export const MAX_BODY_MB_ENV = "WEB2MD_MAX_BODY_MB";
+export const MAX_BODY_MB_MIN = 1;
+export const MAX_BODY_MB_MAX = 50;
+/** O chardet analisa só o início do corpo (custo CPU limitado, sem travar o event loop). */
+export const CHARSET_DETECT_BYTES = 64 * 1024;
+/** Tamanho máximo aceito para a URL de entrada. */
+export const MAX_URL_LENGTH = 2048;
 
 export const ACCEPT_HEADER = "text/markdown, text/html;q=0.9";
 export const USER_AGENT =

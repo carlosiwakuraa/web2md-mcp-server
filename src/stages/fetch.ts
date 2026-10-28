@@ -3,8 +3,12 @@ import iconv from "iconv-lite";
 import { fetch as undiciFetch, type Dispatcher } from "undici";
 import {
   ACCEPT_HEADER,
+  CHARSET_DETECT_BYTES,
   FETCH_TIMEOUT_MS,
   MAX_BODY_BYTES,
+  MAX_BODY_MB_ENV,
+  MAX_BODY_MB_MAX,
+  MAX_BODY_MB_MIN,
   RETRY_BASE_DELAY_MS,
   RETRY_MAX_DELAY_MS,
   RETRY_MAX_RETRIES,
@@ -12,8 +16,20 @@ import {
   RETRY_STATUS_CODES,
   USER_AGENT,
 } from "../constants.js";
+import { effectiveEnv } from "../env.js";
 import { errors, Web2mdError } from "../errors.js";
 import type { FetchOptions, FetchResult } from "../types.js";
+import {
+  ALLOW_DOWNGRADE_ENV,
+  BLOCKED_CODE,
+  BLOCKED_MESSAGE,
+  checkDestination,
+  getGuardedAgent,
+  getGuardedLookup,
+  readNetworkPolicy,
+  type NetworkPolicy,
+  type PolicyHooks,
+} from "./netpolicy.js";
 import {
   getProxyDispatcher,
   readProxyEnv,
@@ -72,12 +88,17 @@ class HttpFailure extends Web2mdError {
     readonly retryAfterMs?: number,
   ) {
     // Retry-After acima do teto: não retentamos; avisa na mensagem (texto base preservado).
-    const waitHint =
+    const base = errors.http(status, url);
+    const wait =
       retryAfterMs !== undefined && RETRY_STATUS_CODES.includes(status) && retryAfterMs > RETRY_MAX_DELAY_MS
-        ? Math.ceil(retryAfterMs / 1000)
+        ? formatWait(retryAfterMs)
         : undefined;
-    const base = errors.http(status, url, waitHint);
-    super(base.code, base.message);
+    super(
+      base.code,
+      wait === undefined
+        ? base.message
+        : `${base.message}. O servidor pediu para aguardar ${wait} antes de nova tentativa; não repeti automaticamente.`,
+    );
   }
 }
 
@@ -91,14 +112,30 @@ class NetworkFailure extends Web2mdError {
   }
 }
 
-/** Retry-After em segundos ou data HTTP -> ms (>= 0); undefined se ausente/inválido. */
+/** Teto aplicado ao Retry-After lido (valores absurdos viram um número finito). */
+const RETRY_AFTER_CAP_MS = 7 * 24 * 3600 * 1000;
+
+/** Retry-After em segundos ou data HTTP -> ms (>= 0, limitado a 7 dias); undefined se ausente/inválido. */
 export function parseRetryAfter(header: string | null | undefined, nowMs: number): number | undefined {
   const value = header?.trim();
   if (!value) return undefined;
-  if (/^\d+(\.\d+)?$/.test(value)) return Math.round(Number(value) * 1000);
+  if (/^\d+(\.\d+)?$/.test(value)) return Math.min(Math.round(Number(value) * 1000), RETRY_AFTER_CAP_MS);
   const date = Date.parse(value);
   if (Number.isNaN(date)) return undefined;
-  return Math.max(0, date - nowMs);
+  return Math.min(Math.max(0, date - nowMs), RETRY_AFTER_CAP_MS);
+}
+
+/** Espera legível ("120 s", "2 h", "mais de 24 h"), nunca notação científica nem "Infinity". */
+function formatWait(ms: number): string {
+  const seconds = Number.isFinite(ms) ? Math.ceil(ms / 1000) : Number.POSITIVE_INFINITY;
+  if (seconds <= 3600) return `${seconds} s`;
+  if (seconds <= 24 * 3600) return `${Math.ceil(seconds / 3600)} h`;
+  return "mais de 24 h";
+}
+
+/** Texto da URL para mensagens: corta entradas gigantes. */
+function shortUrl(raw: string): string {
+  return raw.length > 200 ? `${raw.slice(0, 200)}…` : raw;
 }
 
 function parseUrl(raw: string): URL {
@@ -106,10 +143,19 @@ function parseUrl(raw: string): URL {
   try {
     url = new URL(raw.trim());
   } catch {
-    throw errors.invalidUrl(raw);
+    throw errors.invalidUrl(shortUrl(raw));
   }
-  if (url.protocol !== "http:" && url.protocol !== "https:") throw errors.invalidUrl(raw);
+  if (url.protocol !== "http:" && url.protocol !== "https:") throw errors.invalidUrl(shortUrl(raw));
   return url;
+}
+
+/** Limite do corpo em bytes: WEB2MD_MAX_BODY_MB (1–50, valores fora da faixa são ajustados) ou o padrão. */
+export function maxBodyBytes(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = effectiveEnv(env[MAX_BODY_MB_ENV]);
+  if (!raw) return MAX_BODY_BYTES;
+  const mb = Number(raw);
+  if (!Number.isFinite(mb)) return MAX_BODY_BYTES;
+  return Math.round(Math.min(MAX_BODY_MB_MAX, Math.max(MAX_BODY_MB_MIN, mb)) * 1024 * 1024);
 }
 
 function parseContentType(header: string | null): { type: string; charset?: string } {
@@ -158,18 +204,24 @@ function mapError(
   timeoutMs: number,
   proxy: ProxyChoice | null,
   proxyEnv: ProxyEnv,
+  policy: NetworkPolicy,
 ): Web2mdError {
   if (err instanceof Web2mdError) return err;
+  const codes = collectCodes(err);
+  // Bloqueio no lookup da conexão (IP resolvido privado): mesma mensagem do bloqueio por nome/IP literal.
+  if (codes.includes(BLOCKED_CODE)) return new Web2mdError("NETWORK_ERROR", BLOCKED_MESSAGE);
+  // Com a política ativa, falhas de conexão não distinguem o motivo (evita mapear a rede interna).
+  const opaque = () => new Web2mdError("NETWORK_ERROR", BLOCKED_MESSAGE);
+
   const e = err as { name?: string; message?: string; cause?: unknown } | null;
   if (e && (e.name === "TimeoutError" || e.name === "AbortError")) {
-    return errors.timeout(url, timeoutMs);
+    return policy.restricted ? opaque() : errors.timeout(url, timeoutMs);
   }
   const cause = e?.cause as { code?: string; message?: string; name?: string } | undefined;
   if (cause && (cause.name === "TimeoutError" || cause.name === "AbortError")) {
-    return errors.timeout(url, timeoutMs);
+    return policy.restricted ? opaque() : errors.timeout(url, timeoutMs);
   }
 
-  const codes = collectCodes(err);
   const transient = codes.some((c) => RETRY_NETWORK_CODES.includes(c));
   // `code` de DOMException é numérico; só usamos códigos textuais (ex.: ECONNRESET).
   const causeCode = typeof cause?.code === "string" ? cause.code : undefined;
@@ -182,7 +234,7 @@ function mapError(
       const status = tunnel ? Number(tunnel[1]) : 407;
       if (status === 407) return new NetworkFailure(errors.proxyAuth(proxy.label, url), false);
       return new NetworkFailure(
-        errors.proxyRefused(proxy.label, url, status),
+        policy.restricted ? opaque() : errors.proxyRefused(proxy.label, url, status),
         RETRY_STATUS_CODES.includes(status),
       );
     }
@@ -191,17 +243,17 @@ function mapError(
     }
   }
 
-  return new NetworkFailure(errors.network(url, detail), transient);
+  return new NetworkFailure(policy.restricted ? opaque() : errors.network(url, detail), transient);
 }
 
 /** Lê o corpo como stream, abortando se passar de MAX_BODY_BYTES. */
-async function readBody(res: Response, url: string): Promise<Buffer> {
-  const limitMb = Math.round(MAX_BODY_BYTES / (1024 * 1024));
+async function readBody(res: Response, url: string, maxBytes: number): Promise<Buffer> {
+  const limitMb = +(maxBytes / (1024 * 1024)).toFixed(1);
   const tooBig = () =>
     errors.network(url, `a resposta excede o limite de ${limitMb} MB e foi descartada`);
 
   const declared = Number(res.headers.get("content-length"));
-  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+  if (Number.isFinite(declared) && declared > maxBytes) {
     await res.body?.cancel().catch(() => undefined);
     throw tooBig();
   }
@@ -214,7 +266,7 @@ async function readBody(res: Response, url: string): Promise<Buffer> {
     const { done, value } = await reader.read();
     if (done) break;
     total += value.byteLength;
-    if (total > MAX_BODY_BYTES) {
+    if (total > maxBytes) {
       await reader.cancel().catch(() => undefined);
       throw tooBig();
     }
@@ -286,7 +338,8 @@ function decodeText(buf: Buffer, headerCharset: string | undefined, isHtml: bool
 
   // 4. UTF-8 válido é quase certamente UTF-8; senão, detecção automática.
   if (isValidUtf8(buf)) return decodeWith(buf, "utf-8");
-  const guessed = normalizeCharset(detectCharset(buf));
+  // Só o início: o chardet é O(n) em JS puro e travaria o event loop num corpo de dezenas de MB.
+  const guessed = normalizeCharset(detectCharset(buf.subarray(0, CHARSET_DETECT_BYTES)));
   return decodeWith(buf, guessed ?? "utf-8");
 }
 
@@ -311,6 +364,8 @@ interface FetchContext {
   fetchImpl: typeof fetch;
   dispatcher: Dispatcher | undefined;
   proxyEnv: ProxyEnv;
+  policy: NetworkPolicy;
+  maxBodyBytes: number;
   /** Orçamento total (para a mensagem de timeout). */
   totalMs: number;
   /** Instante (Date.now) em que o orçamento acaba. */
@@ -320,20 +375,53 @@ interface FetchContext {
   random: () => number;
 }
 
+/** Status de redirect seguidos manualmente (cada salto é validado antes de ser requisitado). */
+const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
+const MAX_REDIRECTS = 10;
+
 async function fetchOnce(target: URL, ctx: FetchContext, timeoutMs: number): Promise<FetchResult> {
   const url = target.href;
   let proxy: ProxyChoice | null = null;
   try {
-    proxy = selectProxy(target, ctx.proxyEnv);
-    const init: RequestInit & { dispatcher?: Dispatcher } = {
-      method: "GET",
-      redirect: "follow",
-      headers: { Accept: ACCEPT_HEADER, "User-Agent": USER_AGENT },
-      signal: AbortSignal.timeout(timeoutMs),
-    };
-    if (ctx.dispatcher) init.dispatcher = ctx.dispatcher;
-    const res = await ctx.fetchImpl(url, init);
-    const finalUrl = res.url || url;
+    const signal = AbortSignal.timeout(timeoutMs);
+    let current = target;
+    let res: Response;
+    for (let hops = 0; ; hops++) {
+      checkDestination(current, ctx.policy);
+      proxy = selectProxy(current, ctx.proxyEnv);
+      const init: RequestInit & { dispatcher?: Dispatcher } = {
+        method: "GET",
+        redirect: "manual",
+        headers: { Accept: ACCEPT_HEADER, "User-Agent": USER_AGENT },
+        signal,
+      };
+      if (ctx.dispatcher) init.dispatcher = ctx.dispatcher;
+      res = await ctx.fetchImpl(current.href, init);
+
+      const location = REDIRECT_STATUS.has(res.status) ? res.headers.get("location") : null;
+      if (!location) break;
+      await res.body?.cancel().catch(() => undefined);
+      if (hops >= MAX_REDIRECTS) throw errors.network(url, `mais de ${MAX_REDIRECTS} redirecionamentos`);
+      let next: URL;
+      try {
+        next = new URL(location, current);
+      } catch {
+        throw errors.network(url, "redirecionamento com destino inválido");
+      }
+      if (next.protocol !== "http:" && next.protocol !== "https:") {
+        throw errors.network(url, "redirecionamento para um esquema não suportado");
+      }
+      // Destino proibido tem precedência: o erro de downgrade não pode revelar nada sobre ele.
+      checkDestination(next, ctx.policy);
+      if (current.protocol === "https:" && next.protocol === "http:" && !ctx.policy.allowHttpsDowngrade) {
+        throw errors.network(
+          url,
+          `o servidor redirecionou de https:// para http:// (conexão sem criptografia), o que foi recusado. Para permitir, defina ${ALLOW_DOWNGRADE_ENV}=1`,
+        );
+      }
+      current = next;
+    }
+    const finalUrl = res.url || current.href;
 
     if (!res.ok) {
       await res.body?.cancel().catch(() => undefined);
@@ -349,7 +437,7 @@ async function fetchOnce(target: URL, ctx: FetchContext, timeoutMs: number): Pro
       throw errors.unsupportedContentType(type, url);
     }
 
-    const body = await readBody(res, url);
+    const body = await readBody(res, url, ctx.maxBodyBytes);
 
     if (isMarkdown) {
       return { kind: "native-markdown", finalUrl, markdown: decodeText(body, charset, false) };
@@ -359,7 +447,7 @@ async function fetchOnce(target: URL, ctx: FetchContext, timeoutMs: number): Pro
     }
     return { kind: "html", finalUrl, html: decodeText(body, charset, true) };
   } catch (err) {
-    throw mapError(err, url, ctx.totalMs, proxy, ctx.proxyEnv);
+    throw mapError(err, url, ctx.totalMs, proxy, ctx.proxyEnv, ctx.policy);
   }
 }
 
@@ -415,14 +503,21 @@ export interface FetchPageOptions extends FetchOptions {
   random?: () => number;
   /** Padrão: Date.now. */
   now?: () => number;
+  /** Só para testes: resolvedor de DNS e classificador de IPs resolvidos da política de rede. */
+  netHooks?: PolicyHooks;
 }
 
 const realSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export async function fetchPage(rawUrl: string, opts: FetchPageOptions = {}): Promise<FetchResult> {
   const url = parseUrl(rawUrl);
-  const proxyEnv = readProxyEnv(opts.env ?? process.env);
-  const dispatcher = getProxyDispatcher(proxyEnv);
+  const env = opts.env ?? process.env;
+  const proxyEnv = readProxyEnv(env);
+  const policy = readNetworkPolicy(env, opts.netHooks);
+  // Bloqueio de rede privada: conexões diretas passam por um lookup que valida o IP resolvido.
+  // Com proxy, quem resolve o nome é o proxy (só vale a checagem de nome/IP literal da URL).
+  const lookup = policy.blockPrivate ? getGuardedLookup(policy) : undefined;
+  const dispatcher = getProxyDispatcher(proxyEnv, lookup) ?? (lookup ? getGuardedAgent(lookup) : undefined);
   // O fetch embutido do Node não aceita com segurança um Dispatcher de outra cópia do undici:
   // com proxy, usamos o fetch do próprio undici.
   const fetchImpl = opts.fetchImpl ?? (dispatcher ? (undiciFetch as unknown as typeof fetch) : globalThis.fetch);
@@ -432,6 +527,8 @@ export async function fetchPage(rawUrl: string, opts: FetchPageOptions = {}): Pr
     fetchImpl,
     dispatcher,
     proxyEnv,
+    policy,
+    maxBodyBytes: maxBodyBytes(env),
     totalMs,
     deadline: now() + totalMs,
     now,
