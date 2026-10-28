@@ -28,24 +28,31 @@ Requer Node 20.18.1 ou superior (o bundle .mcpb usa o Node embutido no Claude De
 
 1. Baixe o `web2md.mcpb` da [página de releases](https://github.com/carlosiwakuraa/web2md-mcp-server/releases/latest).
 2. Dê um duplo clique no arquivo (ou arraste-o para **Configurações > Extensões**) e confirme a instalação.
-3. Opcional: na tela da extensão, defina a **Pasta de saída** (`WEB2MD_OUTPUT_DIR`) e o **Proxy HTTPS**. Campos em branco são ignorados, inclusive se o host repassar o placeholder `${user_config.…}` sem substituí-lo.
+3. Opcional: na tela da extensão, defina a **Pasta de saída** (`WEB2MD_OUTPUT_DIR`) e o **Proxy (HTTP e HTTPS)**. O mesmo valor é repassado como `HTTPS_PROXY` e `HTTP_PROXY`, então URLs `http://` também passam pelo proxy. O campo é marcado como sensível (mascarado e armazenado de forma protegida pelo Claude Desktop), pois a URL pode conter `usuário:senha@`. Campos em branco são ignorados, inclusive se o host repassar o placeholder `${user_config.…}` sem substituí-lo.
+4. Confira a integridade do arquivo baixado antes de instalar (ver [Verificar a instalação](#verificar-a-instalação)).
 
 ### Claude Code (npx)
 
+> **Use sempre o nome COM escopo (`@carlosiwakura/...`).** O pacote `web2md-mcp-server` **sem escopo** no npm pertence a outro projeto e não tem relação com este; `npx -y web2md-mcp-server` executa código de terceiros. O pacote correto é [`@carlosiwakura/web2md-mcp-server`](https://www.npmjs.com/package/@carlosiwakura/web2md-mcp-server).
+
+Recomendado, com **versão fixa**:
+
 ```bash
-claude mcp add web2md -- npx -y @carlosiwakura/web2md-mcp-server
+claude mcp add web2md -- npx -y @carlosiwakura/web2md-mcp-server@1.3.0
 ```
+
+A versão fixa dá reprodutibilidade (todo início roda o mesmo código) e deixa a atualização sob o seu controle. Troque `1.3.0` pela versão desejada para atualizar. Sem versão (`npx -y @carlosiwakura/web2md-mcp-server`), cada início executa a última versão publicada, com dependências transitivas resolvidas na hora; é a alternativa se você prefere acompanhar as atualizações automaticamente.
 
 ### Claude Desktop e VS Code com npx
 
-Sem o bundle, adicione o servidor na configuração. No Claude Desktop, em `claude_desktop_config.json`:
+Sem o bundle, adicione o servidor na configuração. Use a mesma versão fixa (troque `1.3.0` pela versão desejada). No Claude Desktop, em `claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "web2md": {
       "command": "npx",
-      "args": ["-y", "@carlosiwakura/web2md-mcp-server"]
+      "args": ["-y", "@carlosiwakura/web2md-mcp-server@1.3.0"]
     }
   }
 }
@@ -59,11 +66,30 @@ No VS Code, em `.vscode/mcp.json` (a chave raiz é `servers`):
     "web2md": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@carlosiwakura/web2md-mcp-server"]
+      "args": ["-y", "@carlosiwakura/web2md-mcp-server@1.3.0"]
     }
   }
 }
 ```
+
+### Verificar a instalação
+
+- **Pacote npm.** Confira o hash de integridade publicado e as assinaturas do registro (pacotes publicados pelo workflow de release trazem provenance):
+
+  ```bash
+  npm view @carlosiwakura/web2md-mcp-server@1.3.0 dist.integrity
+  npm audit signatures   # num projeto que tenha o pacote instalado
+  ```
+
+  O provenance (qual commit e workflow geraram o pacote) aparece na [página do pacote no npm](https://www.npmjs.com/package/@carlosiwakura/web2md-mcp-server), na seção de proveniência da versão.
+- **Bundle .mcpb.** O `.mcpb` não é assinado. A partir da versão que incluir o workflow de release endurecido, o Release traz também o `SHA256SUMS` e uma attestation do build. Com o `web2md.mcpb` e o `SHA256SUMS` na mesma pasta:
+
+  ```bash
+  shasum -a 256 -c SHA256SUMS
+  gh attestation verify web2md.mcpb --repo carlosiwakuraa/web2md-mcp-server
+  ```
+
+  Em versões anteriores esses arquivos não existem no Release; nesse caso, prefira o pacote npm com versão fixa.
 
 ### A partir do código-fonte
 

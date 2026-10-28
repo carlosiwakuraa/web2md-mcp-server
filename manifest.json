@@ -27,7 +27,8 @@
       "args": ["${__dirname}/dist/index.js"],
       "env": {
         "WEB2MD_OUTPUT_DIR": "${user_config.output_dir}",
-        "HTTPS_PROXY": "${user_config.https_proxy}"
+        "HTTPS_PROXY": "${user_config.https_proxy}",
+        "HTTP_PROXY": "${user_config.https_proxy}"
       }
     }
   },
@@ -40,9 +41,10 @@
     },
     "https_proxy": {
       "type": "string",
-      "title": "Proxy HTTPS",
-      "description": "URL de um proxy HTTP(S) para as requisições (ex.: http://proxy.empresa:8080). Vazio = sem proxy.",
-      "required": false
+      "title": "Proxy (HTTP e HTTPS)",
+      "description": "URL do proxy usada para URLs http:// e https:// (ex.: http://proxy.empresa:8080). Pode conter usuário:senha (http://usuario:senha@proxy:8080); o valor é armazenado de forma protegida pelo Claude Desktop. Vazio = sem proxy.",
+      "required": false,
+      "sensitive": true
     }
   },
   "tools": [
