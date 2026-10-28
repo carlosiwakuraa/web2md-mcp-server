@@ -18,33 +18,31 @@ You can try Vitest online on [StackBlitz](https://vitest.new/). It runs Vitest d
 
 [Learn how to install by Video](https://vueschool.io/lessons/how-to-install-vitest?friend=vueuse)
 
-npmyarnpnpmbundeno
-
-bash
+**npm**
 
 ```bash
 npm install -D vitest
 ```
 
-bash
+**yarn**
 
 ```bash
 yarn add -D vitest vite
 ```
 
-bash
+**pnpm**
 
 ```bash
 pnpm add -D vitest
 ```
 
-bash
+**bun**
 
 ```bash
 bun add -D vitest
 ```
 
-bash
+**deno**
 
 ```bash
 deno add -D vitest
@@ -61,8 +59,6 @@ Vitest and third party integrations can use `.vitest` directory to store generat
 
 .gitignore
 
-sh
-
 ```sh
 # Vitest reports and artifacts
 .vitest/
@@ -75,8 +71,6 @@ As an example, we will write a simple test that verifies the output of a functio
 
 sum.js
 
-js
-
 ```js
 export function sum(a, b) {
   return a + b
@@ -84,8 +78,6 @@ export function sum(a, b) {
 ```
 
 sum.test.js
-
-js
 
 ```js
 import { expect, test } from 'vitest'
@@ -103,8 +95,6 @@ Next, in order to execute the test, add the following section to your `package.j
 
 package.json
 
-json
-
 ```json
 {
   "scripts": {
@@ -114,8 +104,6 @@ json
 ```
 
 Finally, run `npm run test`, `yarn test` or `pnpm test`, depending on your package manager, and Vitest will print this message:
-
-txt
 
 ```txt
 ✓ sum.test.js (1)

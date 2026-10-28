@@ -479,7 +479,7 @@ A conversão (parse, extração, Markdown) roda em `worker_threads` com limites,
 
 - Em `mode="article"`, páginas sem `<main>`, `<article>` ou `[role=main]` caem no Readability, que pode descartar seções inteiras de documentos longos (ex.: a especificação XML 1.0 da W3C perde cerca de 17% do texto). Como salvaguarda, se o Readability reter menos de 90% do texto corrido (fora de links) do `<body>`, o servidor usa o `<body>` inteiro (sem `nav`, `header`, `footer` e `aside`), o que pode incluir blocos laterais feitos com `div`. Se ainda faltar conteúdo, use `mode="full"`.
 - Sem execução de JavaScript: SPAs devolvem o erro "depende de JavaScript" ou pouco conteúdo.
-- Em blocos de código com abas (VitePress/Docusaurus), os rótulos das abas aparecem como texto solto.
+- Grupos de abas (Docusaurus, VitePress, MkDocs Material e ARIA `tablist`, como no Starlight) viram painéis em sequência, cada um precedido do rótulo em negrito (`**npm**`), inclusive as abas inativas. Se rótulos e painéis não casarem um a um, o grupo é deixado como está. Outros temas de abas não são reconhecidos.
 
 ## Fora do escopo da v1
 
