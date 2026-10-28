@@ -334,6 +334,15 @@ npm test
 
 Roda o vitest: golden files em `fixtures/` (`pagina.html` → `pagina.expected.md`), testes unitários dos estágios e um teste do servidor que sobe `src/index.ts` por stdio e fala JSON-RPC (`server/discover`, `tools/list`, `tools/call`).
 
+## Limites
+
+A conversão (parse, extração, Markdown) roda em `worker_threads` com limites, para uma página hostil não travar nem derrubar o servidor:
+
+- HTML acima de 5 MB é recusado; ajuste com `WEB2MD_MAX_HTML_BYTES` (bytes). Páginas com mais de 100 mil elementos ou aninhamento acima de 512 níveis também são recusadas.
+- Cada conversão tem 20 s e 1 GB de heap; ao estourar, o worker é encerrado e a chamada devolve erro (o servidor continua de pé).
+- No máximo 4 conversões simultâneas no processo (todas as tools e lotes compartilham), com fila limitada; o prazo do lote cancela de fato as conversões pendentes.
+- Erro não tratado (`uncaughtException`/`unhandledRejection`) encerra o servidor com código 1 e log no `stderr`; erros internos voltam ao modelo só como mensagem genérica.
+
 ## Limitações conhecidas
 
 - Em `mode="article"`, páginas sem `<main>`, `<article>` ou `[role=main]` caem no Readability, que pode descartar seções inteiras de documentos longos (ex.: a especificação XML 1.0 da W3C perde cerca de 17% do texto). Se faltar conteúdo, use `mode="full"`.

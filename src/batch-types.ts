@@ -19,8 +19,8 @@ export interface InlineDoc {
 export type PipelineResult = FullPipelineResult;
 
 export interface BatchDeps {
-  /** Padrão: runPipeline com timeout limitado ao tempo restante do prazo do lote. */
-  run?: (input: ToolInput) => Promise<PipelineResult>;
+  /** Padrão: runPipeline com timeout limitado ao tempo restante do prazo do lote. `signal` aborta ao estourar o prazo. */
+  run?: (input: ToolInput, signal?: AbortSignal) => Promise<PipelineResult>;
   /** Padrão: saveConversion gravando em `outputDir`. */
   save?: (document: string, pageUrl: string, mode: Mode) => Promise<string>;
   /** Padrão: BATCH_CONCURRENCY. */

@@ -38,3 +38,27 @@ export const RETRY_MAX_DELAY_MS = 10_000;
 export const RETRY_STATUS_CODES: readonly number[] = [429, 502, 503, 504];
 /** Códigos de erro de rede transitórios que valem nova tentativa. */
 export const RETRY_NETWORK_CODES: readonly string[] = ["ECONNRESET", "ETIMEDOUT", "EAI_AGAIN", "UND_ERR_SOCKET"];
+
+/** Isolamento da conversão: a parte CPU-bound roda em worker_threads com limites. */
+/** Teto de HTML aceito para conversão (bytes). Sobrescrevível por MAX_HTML_BYTES_ENV. */
+export const MAX_HTML_BYTES_FOR_CONVERSION = 5 * 1024 * 1024;
+/** Variável de ambiente que sobrescreve MAX_HTML_BYTES_FOR_CONVERSION (inteiro positivo, em bytes). */
+export const MAX_HTML_BYTES_ENV = "WEB2MD_MAX_HTML_BYTES";
+/** Teto de elementos do DOM (pré-checagem por regex e checagem pós-parse). */
+export const MAX_DOM_NODES = 100_000;
+/** Profundidade máxima do DOM (checagem pós-parse). */
+export const MAX_DOM_DEPTH = 512;
+/** A pré-checagem por regex é aproximada: só rejeita antes do parse acima de MAX_DOM_DEPTH x este fator. */
+export const PRESCAN_DEPTH_FACTOR = 4;
+/** Tempo máximo de uma conversão no worker; estourado, o worker é encerrado (terminate). */
+export const CONVERSION_TIMEOUT_MS = 20_000;
+/** Teto de heap (old generation) de cada worker, em MB. Estourar vira erro tratável, não derruba o processo. */
+export const CONVERSION_MAX_OLD_GEN_MB = 1024;
+/** Conversões simultâneas no processo inteiro (todas as tools e lotes compartilham). */
+export const MAX_CONCURRENT_CONVERSIONS = 4;
+/** Conversões esperando vaga; acima disso a chamada falha na hora com "servidor ocupado". */
+export const MAX_QUEUED_CONVERSIONS = 64;
+/** Um worker é reciclado depois de tantas conversões (limita crescimento de memória acumulado). */
+export const WORKER_MAX_TASKS = 50;
+/** Worker ocioso é encerrado depois deste tempo. */
+export const WORKER_IDLE_MS = 60_000;
