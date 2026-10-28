@@ -11,7 +11,7 @@ Desde a v1.2.0 há também a tool `web2md_fetch_markdown_batch`, que converte v�
 - **Proxy corporativo:** respeita `HTTPS_PROXY`, `HTTP_PROXY` e `NO_PROXY` (ver [Configuração de rede](#configuração-de-rede)).
 - **Retry com backoff:** repete 429, 502, 503, 504 e erros de rede transitórios, respeitando `Retry-After`.
 - **`mode: "outline"` e `section`:** devolvem só o índice de headings ou só uma seção, para gastar menos contexto.
-- **Distribuição:** pacote npm (`npx -y web2md-mcp-server`) e bundle `.mcpb` para o Claude Desktop.
+- **Distribuição:** pacote npm (`npx -y @carlosiwakuraa/web2md-mcp-server`) e bundle `.mcpb` para o Claude Desktop.
 
 ## Novidades da v1.2.0
 
@@ -33,7 +33,7 @@ Requer Node 20.18.1 ou superior (o bundle .mcpb usa o Node embutido no Claude De
 ### Claude Code (npx)
 
 ```bash
-claude mcp add web2md -- npx -y web2md-mcp-server
+claude mcp add web2md -- npx -y @carlosiwakuraa/web2md-mcp-server
 ```
 
 ### Claude Desktop e VS Code com npx
@@ -45,7 +45,7 @@ Sem o bundle, adicione o servidor na configuração. No Claude Desktop, em `clau
   "mcpServers": {
     "web2md": {
       "command": "npx",
-      "args": ["-y", "web2md-mcp-server"]
+      "args": ["-y", "@carlosiwakuraa/web2md-mcp-server"]
     }
   }
 }
@@ -59,7 +59,7 @@ No VS Code, em `.vscode/mcp.json` (a chave raiz é `servers`):
     "web2md": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "web2md-mcp-server"]
+      "args": ["-y", "@carlosiwakuraa/web2md-mcp-server"]
     }
   }
 }
