@@ -190,13 +190,18 @@ describe.runIf(posix)("pasta padrão: validação de dono, tipo e permissão", (
   // A pasta padrão fica sob os.tmpdir(); apontamos o tmpdir para uma pasta de teste isolada.
   const withTmpdir = async (fn: (dir: string) => Promise<void>) => {
     const base = mkdtempSync(path.join(tmp, "tmpdir-"));
+    // XDG_RUNTIME_DIR (definido nos runners Linux) mudaria a pasta padrão real, então também é isolado.
     const old = process.env.TMPDIR;
+    const oldRuntime = process.env.XDG_RUNTIME_DIR;
     process.env.TMPDIR = base;
+    delete process.env.XDG_RUNTIME_DIR;
     try {
       await fn(defaultOutputDir({}));
     } finally {
       if (old === undefined) delete process.env.TMPDIR;
       else process.env.TMPDIR = old;
+      if (oldRuntime === undefined) delete process.env.XDG_RUNTIME_DIR;
+      else process.env.XDG_RUNTIME_DIR = oldRuntime;
     }
   };
 
