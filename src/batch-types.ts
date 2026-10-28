@@ -9,11 +9,14 @@ export type BatchGroup = z.infer<typeof BatchGroupSchema>;
 export type BatchStructured = z.infer<typeof BatchOutputSchema>;
 export type BatchDispatch = BatchStructured["dispatch"];
 
-/** Documento a exibir inline (já truncado por max_chars). */
+/** Documento a exibir inline. */
 export interface InlineDoc {
   slug: string;
   url: string;
+  /** Corpo já truncado em max_chars (não confiável: vai dentro do envelope). */
   text: string;
+  /** Marcador de truncamento do servidor (vai fora do envelope), ou null. */
+  marker: string | null;
 }
 
 export type PipelineResult = FullPipelineResult;
