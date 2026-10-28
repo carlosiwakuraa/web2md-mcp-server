@@ -36,7 +36,7 @@ Outline: com mode="outline" a resposta é o frontmatter (com mode: outline) mais
 
 Seção: com section (ou fragmento da URL) o texto é o frontmatter (com os campos section e section_slug) mais só a seção; total_chars e a paginação (max_chars/start_index/next_start_index) valem para esse documento da seção, e section no structuredContent descreve o heading escolhido. Blocos de código nunca são cortados nem confundem a detecção de headings. document_chars é sempre o tamanho do documento completo salvo.
 
-Salvamento: toda conversão bem-sucedida é gravada na pasta temporária do sistema em web2md/ (ou em WEB2MD_OUTPUT_DIR, se definida), sempre com o documento completo, independentemente de max_chars/start_index/section/outline (o modo outline grava no mesmo arquivo do modo article, que tem o mesmo conteúdo). saved_path traz o caminho absoluto do arquivo (null se a gravação falhar). Reconverter a mesma URL e modo sobrescreve o arquivo.
+Salvamento: toda conversão bem-sucedida é gravada na pasta temporária do sistema (subpasta web2md-<uid>/, modo 0700) (ou em WEB2MD_OUTPUT_DIR, se definida), sempre com o documento completo, independentemente de max_chars/start_index/section/outline (o modo outline grava no mesmo arquivo do modo article, que tem o mesmo conteúdo). saved_path traz o caminho absoluto do arquivo (null se a gravação falhar). Reconverter a mesma URL e modo sobrescreve o arquivo.
 
 Paginação: se o documento passar de max_chars, a resposta termina, depois do envelope, com o marcador "[Conteúdo truncado: exibidos caracteres X–Y de TOTAL. Para continuar, chame novamente com start_index=N]" (e next_start_index no structuredContent). max_chars limita o trecho do documento; o aviso e os delimitadores do envelope são acrescentados a ele. Chame de novo com o mesmo url/mode e start_index=N para ler o restante; o frontmatter só aparece na primeira parte. Um start_index além do fim do documento é um erro.
 
@@ -72,7 +72,7 @@ Execução: as URLs são buscadas com concorrência ${BATCH_CONCURRENCY}. A falh
 
 Prazo global: o lote tem prazo de ${BATCH_DEADLINE_MS / 1000} s. URLs não concluídas até lá viram erro "Prazo do lote ... esgotado" e o resultado parcial é devolvido; os arquivos já salvos permanecem.
 
-Salvamento: cada página convertida é gravada como <host>_<caminho>-<hash>[.full].md (o slug é o nome sem .md) na pasta temporária do sistema em web2md/ (ou em ${OUTPUT_DIR_ENV}, se definida); output_dir na resposta traz a pasta. O arquivo salvo é sempre o documento completo. URLs que convergem para o mesmo arquivo final (mesmo nome) contam como um só arquivo. Reconverter a mesma URL e modo sobrescreve o arquivo.
+Salvamento: cada página convertida é gravada como <host>_<caminho>-<hash>[.full].md (o slug é o nome sem .md) na pasta temporária do sistema (subpasta web2md-<uid>/, modo 0700) (ou em ${OUTPUT_DIR_ENV}, se definida); output_dir na resposta traz a pasta. O arquivo salvo é sempre o documento completo. URLs que convergem para o mesmo arquivo final (mesmo nome) contam como um só arquivo. Reconverter a mesma URL e modo sobrescreve o arquivo.
 
 Retorno: texto (manifesto, conteúdo inline ou plano de subagentes, conforme dispatch) e structuredContent { dispatch, total, succeeded, failed, output_dir, objective, items, groups }.
 

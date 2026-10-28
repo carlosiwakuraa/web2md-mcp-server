@@ -1,10 +1,7 @@
 import { Web2mdError, type ErrorCode } from "../errors.js";
 
-/**
- * Erros do isolamento de conversão. Os códigos são novos e ainda não constam no union `ErrorCode` de
- * src/errors.ts (arquivo de outro dono): o cast é temporário; basta adicioná-los lá quando convier.
- */
-const code = (c: string) => c as ErrorCode;
+/** Erros do isolamento de conversão (worker_threads). */
+const code = (c: ErrorCode) => c;
 
 const mb = (bytes: number) => (bytes / (1024 * 1024)).toLocaleString("pt-BR", { maximumFractionDigits: 1 });
 

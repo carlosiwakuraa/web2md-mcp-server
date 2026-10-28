@@ -9,7 +9,10 @@ export type ErrorCode =
   | "JS_REQUIRED"
   | "INVALID_ARGUMENT"
   | "SECTION_NOT_FOUND"
-  | "SECTION_AMBIGUOUS";
+  | "SECTION_AMBIGUOUS"
+  | "CONVERSION_TIMEOUT"
+  | "CONVERSION_LIMIT"
+  | "CONVERSION_ABORTED";
 
 /** Erro com mensagem já pronta para o Claude (seção 6 da spec). */
 export class Web2mdError extends Error {
