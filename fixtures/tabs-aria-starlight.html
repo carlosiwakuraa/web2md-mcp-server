@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Add</title></head>
+<body>
+<h1>Add</h1>
+<starlight-tabs>
+  <div class="tablist-wrapper">
+    <ul role="tablist">
+      <li role="presentation" class="tab"><a role="tab" href="#tab-1" id="tab-1" aria-selected="true" aria-controls="tab-panel-1" tabindex="0">pnpm</a></li>
+      <li role="presentation" class="tab"><a role="tab" href="#tab-2" id="tab-2" aria-selected="false" aria-controls="tab-panel-2" tabindex="-1">npm</a></li>
+    </ul>
+  </div>
+  <div role="tabpanel" id="tab-panel-1" aria-labelledby="tab-1"><p>Run <code>pnpm add astro</code>.</p></div>
+  <div role="tabpanel" id="tab-panel-2" aria-labelledby="tab-2" hidden><p>Run <code>npm install astro</code>.</p></div>
+</starlight-tabs>
+</body>
+</html>

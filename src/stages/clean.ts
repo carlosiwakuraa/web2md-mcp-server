@@ -12,7 +12,11 @@
  * - `<form>` é removido, exceto quando envolve o conteúdo da página (ASP.NET WebForms: um único
  *   <form> em volta do body): nesse caso é "desembrulhado" (filhos sobem, o form some).
  * - `iframe` de anúncio é removido; iframes de conteúdo (YouTube, Vimeo, player, embed…) ficam.
+ * - Grupos de abas (Docusaurus, VitePress, MkDocs Material, ARIA) são reescritos ANTES da remoção de
+ *   `hidden`/`button`, senão as abas inativas somem (ver stages/tabs.ts).
+ * - O rótulo de linguagem do VitePress (`div.language-x > span.lang`) é removido: não é código.
  */
+import { normalizeTabs } from "./tabs.js";
 
 const MATH_SELECTOR = [
   "math",
@@ -96,6 +100,11 @@ function unwrap(el: Element): void {
 
 /** Etapa 3: remove script/style/noscript/svg/form/button/iframe de anúncio/hidden/aria-hidden. Muta o documento. */
 export function cleanDom(doc: Document): void {
+  normalizeTabs(doc);
+
+  // rótulo de linguagem do VitePress, solto ao lado do <pre>
+  for (const el of Array.from(doc.querySelectorAll('div[class*="language-"] > span.lang'))) el.remove();
+
   // script (menos MathJax v2), style, noscript, svg, button
   for (const el of Array.from(doc.querySelectorAll("script, style, noscript, svg, button"))) {
     if (el.tagName.toLowerCase() === "script" && /^math\//i.test(el.getAttribute("type") ?? "")) continue;
