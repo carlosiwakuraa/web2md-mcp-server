@@ -8,7 +8,7 @@ import { BATCH_CONCURRENCY, BATCH_DEADLINE_MS, BATCH_TOOL_NAME, DEFAULT_FILES_PE
 import { handleBatch } from "./batch.js";
 import { Web2mdError } from "./errors.js";
 import { saveConversion } from "./output.js";
-import { runPipeline } from "./pipeline.js";
+import { conversionMode, runPipeline, urlFragment } from "./pipeline.js";
 import { BatchInputSchema, BatchOutputSchema } from "./schemas/batch-input.js";
 import { InputSchema, OutputSchema } from "./schemas/input.js";
 import type { ToolInput } from "./types.js";
@@ -19,15 +19,20 @@ const TOOL_DESCRIPTION = `Busca uma URL a partir da máquina local e devolve o c
 
 Parâmetros:
 - url (obrigatório): URL http:// ou https:// da página.
-- mode: "article" (padrão) extrai só o conteúdo principal (main/article, sem menu, rodapé e barra lateral). Use "full" para converter o <body> inteiro quando "article" devolver pouco conteúdo ou o conteúdo errado.
-- max_chars: limite de caracteres por resposta (padrão 50000).
-- start_index: posição do documento onde a resposta começa (padrão 0), para paginar.
+- mode: "article" (padrão) extrai só o conteúdo principal (main/article, sem menu, rodapé e barra lateral). Use "full" para converter o <body> inteiro quando "article" devolver pouco conteúdo ou o conteúdo errado. Use "outline" para ler só o índice de headings da página (converte como "article"): economiza contexto em páginas longas; depois peça a seção desejada com section.
+- section: devolve só uma seção do documento convertido, em vez da página inteira. Aceita o slug do heading (veja o outline), o texto do heading (sem diferenciar maiúsculas/acentos; prefixo ou trecho serve se for unívoco) ou o id HTML. A seção inclui o heading e tudo até o próximo heading de nível igual ou menor (subseções entram). Se section não for informado, o fragmento da URL (https://site/pagina#instalacao) é usado quando casar com um heading; se não casar, é ignorado e a página inteira é devolvida. Seção inexistente ou ambígua é erro e lista os headings disponíveis.
+- max_chars: limite de caracteres por resposta (padrão 50000). No outline limita o tamanho do índice: se não couber, só os primeiros headings aparecem, seguidos de um aviso de truncamento.
+- start_index: posição do documento onde a resposta começa (padrão 0), para paginar. Com section, a posição é dentro da seção. Não se aplica a mode="outline" (o índice não é paginado).
 - include_links: se true, anexa a seção "## Links da página" com todos os links do conteúdo.
 - return_content: se false, não devolve o Markdown no contexto; salva em disco e retorna só metadados (url, título, chars, caminho). Padrão true.
 
-Retorno: texto Markdown com um frontmatter YAML (url, canonical, title, description, lang, fetched_at, source), seguido do corpo com um único H1. Se o servidor responder com Markdown nativo, ele é devolvido diretamente (source: native-markdown). O structuredContent traz { url, source, total_chars, next_start_index, saved_path }.
+Retorno: texto Markdown com um frontmatter YAML (url, canonical, title, description, lang, fetched_at, source), seguido do corpo com um único H1. Se o servidor responder com Markdown nativo, ele é devolvido diretamente (source: native-markdown). O structuredContent traz { url, source, total_chars, document_chars, next_start_index, saved_path, section, headings, headings_truncated }.
 
-Salvamento: toda conversão bem-sucedida é gravada na pasta temporária do sistema em web2md/ (ou em WEB2MD_OUTPUT_DIR, se definida), sempre com o documento completo, independentemente de max_chars/start_index. saved_path traz o caminho absoluto do arquivo (null se a gravação falhar). Reconverter a mesma URL e modo sobrescreve o arquivo.
+Outline: com mode="outline" a resposta é o frontmatter (com mode: outline) mais uma lista hierárquica dos headings, cada um com nível, texto, slug estável e offset inicial–final (em caracteres do documento completo, frontmatter incluído) e tamanho da seção; headings no structuredContent traz a mesma lista estruturada ({ heading, level, slug, id, start, end, chars }) e total_chars o tamanho do documento completo. Fluxo para economizar contexto: chame com mode="outline", escolha o slug e chame de novo com section="<slug>". Com section junto de outline, o índice se restringe àquela seção. O texto do índice respeita max_chars: em páginas com muitos headings ele termina com o aviso "[Índice truncado: exibidos X de Y headings ...]"; use section="<slug>" numa seção pai para ver o restante. headings no structuredContent é limitado a 500 itens (headings_truncated=true quando há mais).
+
+Seção: com section (ou fragmento da URL) o texto é o frontmatter (com os campos section e section_slug) mais só a seção; total_chars e a paginação (max_chars/start_index/next_start_index) valem para esse documento da seção, e section no structuredContent descreve o heading escolhido. Blocos de código nunca são cortados nem confundem a detecção de headings. document_chars é sempre o tamanho do documento completo salvo.
+
+Salvamento: toda conversão bem-sucedida é gravada na pasta temporária do sistema em web2md/ (ou em WEB2MD_OUTPUT_DIR, se definida), sempre com o documento completo, independentemente de max_chars/start_index/section/outline (o modo outline grava no mesmo arquivo do modo article, que tem o mesmo conteúdo). saved_path traz o caminho absoluto do arquivo (null se a gravação falhar). Reconverter a mesma URL e modo sobrescreve o arquivo.
 
 Paginação: se o documento passar de max_chars, a resposta termina com o marcador "[Conteúdo truncado: exibidos caracteres X–Y de TOTAL. Para continuar, chame novamente com start_index=N]" (e next_start_index no structuredContent). Chame de novo com o mesmo url/mode e start_index=N para ler o restante; o frontmatter só aparece na primeira parte. Um start_index além do fim do documento é um erro.
 
@@ -52,6 +57,7 @@ Parâmetros:
 - inline_max_files: limite de arquivos convertidos que ainda vêm inline (padrão ${DEFAULT_INLINE_MAX_FILES}).
 - files_per_agent: arquivos por subagente no plano (padrão ${DEFAULT_FILES_PER_AGENT}).
 - objective: o que o usuário quer das páginas (ex.: "comparar as opções de autenticação"). Informe sempre que souber: é repassado aos subagentes para guiar a extração.
+- Sem outline/section: o lote sempre converte e devolve documentos inteiros (o fragmento "#..." das URLs é descartado). Para índice de headings ou uma seção, use a tool ${TOOL_NAME} em cada URL.
 - max_chars: só no modo inline, máximo de caracteres de cada documento no contexto (padrão 50000). Um documento maior termina com um marcador que aponta para o arquivo salvo completo; o lote não tem start_index, então para ler o restante leia o saved_path.
 
 Execução: as URLs são buscadas com concorrência ${BATCH_CONCURRENCY}. A falha de uma URL não derruba as demais: cada item do manifesto tem status "ok" ou "error" (com a mensagem). isError só é true quando TODAS as URLs falham. Só arquivos com status "ok" entram no plano de subagentes. Falha ao salvar o arquivo conta como erro daquele item: nenhum item fica "ok" sem arquivo salvo.
@@ -65,11 +71,18 @@ Retorno: texto (manifesto, conteúdo inline ou plano de subagentes, conforme dis
 const SERVER_INSTRUCTIONS = `A tool ${BATCH_TOOL_NAME} converte várias URLs em Markdown. Quando ela responder com dispatch "subagents", o conteúdo das páginas NÃO está no contexto: ele está salvo em arquivos.
 Delegue a leitura aos subagentes conforme o plano em groups (um subagente por grupo, em paralelo, repassando o objective) e não leia esses arquivos no contexto principal.`;
 
-function compactSummary(url: string, title: string | undefined, chars: number, savedPath: string | null): string {
+function compactSummary(
+  url: string,
+  title: string | undefined,
+  chars: number,
+  savedPath: string | null,
+  extra: string[] = [],
+): string {
   const lines = ['Conversão concluída.', ''];
   lines.push(`url: ${url}`);
   if (title) lines.push(`title: ${title}`);
   lines.push(`chars: ${chars.toLocaleString('pt-BR')}`);
+  lines.push(...extra);
   lines.push(`saved: ${savedPath ?? '(falha ao salvar)'}`);
   return lines.join('\n');
 }
@@ -77,24 +90,33 @@ function compactSummary(url: string, title: string | undefined, chars: number, s
 /** Executa a tool e traduz o resultado/erros para CallToolResult. Nunca lança. */
 export async function handleFetchMarkdown(input: ToolInput): Promise<CallToolResult> {
   try {
-    const page = await runPipeline(input);
+    const fragment = urlFragment(input.url);
+    const page = await runPipeline(fragment === undefined ? input : { ...input, fragment });
     // Falha ao gravar não derruba a conversão: o texto ainda volta ao Claude.
     let savedPath: string | null = null;
     try {
-      savedPath = await saveConversion(page.document, page.url, input.mode);
+      // O arquivo é sempre o documento completo; outline salva no mesmo arquivo de "article" (mesmo conteúdo).
+      savedPath = await saveConversion(page.document, page.url, conversionMode(input.mode));
     } catch (saveErr) {
       console.error("[web2md] não foi possível salvar a conversão:", saveErr);
     }
+    const extra: string[] = [];
+    if (page.section) extra.push(`section: ${page.section.slug} (${page.section.chars.toLocaleString('pt-BR')} chars)`);
+    if (page.headings) extra.push(`headings: ${page.headings.length}`);
     const text = input.return_content
       ? page.text
-      : compactSummary(page.url, page.title, page.total_chars, savedPath);
+      : compactSummary(page.url, page.title, page.document_chars, savedPath, extra);
     const next_start_index = input.return_content ? page.next_start_index : null;
     return {
       content: [{ type: "text", text }],
       structuredContent: {
         url: page.url,
         source: page.source,
-        total_chars: page.total_chars,
+        total_chars: input.return_content ? page.total_chars : page.document_chars,
+        document_chars: page.document_chars,
+        section: page.section,
+        headings: input.return_content ? page.headings : null,
+        headings_truncated: input.return_content ? page.headings_truncated : false,
         next_start_index,
         saved_path: savedPath,
       },

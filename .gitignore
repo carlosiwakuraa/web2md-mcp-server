@@ -26,3 +26,7 @@ npm-debug.log*
 .idea/
 *.swp
 *.swo
+
+# MCP Bundle
+*.mcpb
+.mcpb-staging/

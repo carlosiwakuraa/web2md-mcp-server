@@ -3,13 +3,14 @@ import { mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { OUTPUT_DIR_ENV } from "./constants.js";
+import { effectiveEnv } from "./env.js";
 import type { Mode } from "./types.js";
 
 const MAX_SLUG_CHARS = 100;
 
 /** Pasta de saída: `WEB2MD_OUTPUT_DIR` se definida, senão `<tmpdir>/web2md`. */
 export function resolveOutputDir(env: NodeJS.ProcessEnv = process.env): string {
-  const custom = env[OUTPUT_DIR_ENV]?.trim();
+  const custom = effectiveEnv(env[OUTPUT_DIR_ENV]);
   if (custom) return path.resolve(custom);
   return path.join(os.tmpdir(), "web2md");
 }

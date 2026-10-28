@@ -301,8 +301,8 @@ describe("fetchPage: regra developer.apple.com", () => {
     expect(r.kind).toBe("html");
   });
 
-  it("não faz fallback em erro 5xx", async () => {
-    const { calls, fetchImpl } = recorder(() => new Response("x", { status: 503 }));
+  it("não faz fallback em erro 5xx (500 não é repetido)", async () => {
+    const { calls, fetchImpl } = recorder(() => new Response("x", { status: 500 }));
     await expectCode(fetchPage("https://developer.apple.com/documentation/swiftui/view", { fetchImpl }), "HTTP_ERROR");
     expect(calls).toHaveLength(1);
   });

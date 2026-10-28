@@ -6,6 +6,13 @@ A tool exposta se chama `web2md_fetch_markdown`. Ela não altera o servidor remo
 
 Desde a v1.2.0 há também a tool `web2md_fetch_markdown_batch`, que converte várias URLs de uma vez (ver [Conversão em lote](#conversão-em-lote-v120)).
 
+## Novidades da v1.3.0
+
+- **Proxy corporativo:** respeita `HTTPS_PROXY`, `HTTP_PROXY` e `NO_PROXY` (ver [Configuração de rede](#configuração-de-rede)).
+- **Retry com backoff:** repete 429, 502, 503, 504 e erros de rede transitórios, respeitando `Retry-After`.
+- **`mode: "outline"` e `section`:** devolvem só o índice de headings ou só uma seção, para gastar menos contexto.
+- **Distribuição:** pacote npm (`npx -y @carlosiwakura/web2md-mcp-server`) e bundle `.mcpb` para o Claude Desktop.
+
 ## Novidades da v1.2.0
 
 - Nova tool `web2md_fetch_markdown_batch`: converte de 1 a 20 URLs em Markdown em uma só chamada.
@@ -15,34 +22,59 @@ Desde a v1.2.0 há também a tool `web2md_fetch_markdown_batch`, que converte v�
 
 ## Instalação
 
+Requer Node 20.18.1 ou superior (o bundle .mcpb usa o Node embutido no Claude Desktop).
+
+### Claude Desktop (bundle .mcpb)
+
+1. Baixe o `web2md.mcpb` da [página de releases](https://github.com/carlosiwakuraa/web2md-mcp-server/releases/latest).
+2. Dê um duplo clique no arquivo (ou arraste-o para **Configurações > Extensões**) e confirme a instalação.
+3. Opcional: na tela da extensão, defina a **Pasta de saída** (`WEB2MD_OUTPUT_DIR`) e o **Proxy HTTPS**. Campos em branco são ignorados, inclusive se o host repassar o placeholder `${user_config.…}` sem substituí-lo.
+
+### Claude Code (npx)
+
 ```bash
-npm install && npm run build
+claude mcp add web2md -- npx -y @carlosiwakura/web2md-mcp-server
 ```
 
-Requer Node 20 ou superior. O build gera `dist/index.js`.
+### Claude Desktop e VS Code com npx
 
-### Claude Code
-
-```bash
-claude mcp add web2md -- node /caminho/para/web2md/dist/index.js
-```
-
-### Claude Desktop
-
-Em `claude_desktop_config.json`:
+Sem o bundle, adicione o servidor na configuração. No Claude Desktop, em `claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "web2md": {
-      "command": "node",
-      "args": ["/caminho/para/web2md/dist/index.js"]
+      "command": "npx",
+      "args": ["-y", "@carlosiwakura/web2md-mcp-server"]
     }
   }
 }
 ```
 
-Em desenvolvimento, use `npm run dev` (roda `src/index.ts` com `tsx`).
+No VS Code, em `.vscode/mcp.json` (a chave raiz é `servers`):
+
+```json
+{
+  "servers": {
+    "web2md": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@carlosiwakura/web2md-mcp-server"]
+    }
+  }
+}
+```
+
+### A partir do código-fonte
+
+```bash
+git clone https://github.com/carlosiwakuraa/web2md-mcp-server.git
+cd web2md-mcp-server
+npm install && npm run build
+claude mcp add web2md -- node "$(pwd)/dist/index.js"
+```
+
+Em desenvolvimento, use `npm run dev` (roda `src/index.ts` com `tsx`). Para gerar o bundle localmente: `npm run mcpb:pack` (cria `web2md.mcpb`).
 
 ## Configuração de rede
 
@@ -85,17 +117,55 @@ Em ambientes com certificados CA próprios (bancos, empresas, VPNs), as requisi�
 
 > `--use-system-ca` requer Node.js 22 ou superior. Em versões anteriores, use `NODE_EXTRA_CA_CERTS=/caminho/para/ca-bundle.pem` apontando para o arquivo `.pem` com os certificados da sua organização.
 
+### Proxy
+
+O servidor respeita as variáveis de ambiente de proxy padrão. Defina-as via `env` no seu cliente MCP, como no exemplo dos certificados acima:
+
+| Variável | Uso |
+| --- | --- |
+| `HTTPS_PROXY` / `https_proxy` | Proxy para URLs `https://` |
+| `HTTP_PROXY` / `http_proxy` | Proxy para URLs `http://` |
+| `NO_PROXY` / `no_proxy` | Destinos que devem ir direto, sem proxy |
+
+```json
+"env": {
+  "HTTPS_PROXY": "http://usuario:senha@proxy.empresa.com:3128",
+  "NO_PROXY": "localhost,127.0.0.1,.intranet.empresa.com"
+}
+```
+
+- **Escolha por esquema.** URLs `https://` usam só `HTTPS_PROXY` e URLs `http://` usam só `HTTP_PROXY`. Se existirem as duas grafias de uma variável, a minúscula vence. Valor vazio, só com espaços ou com placeholder `${...}` não resolvido (como `${user_config.https_proxy}` do bundle .mcpb) conta como não definido; sem nenhuma variável de proxy, o comportamento é o mesmo de antes.
+- **Formato do proxy.** `http://host:porta` ou `https://host:porta`; o esquema pode ser omitido (`proxy:3128` vira `http://proxy:3128`). Credenciais na URL (`usuario:senha@`) são enviadas ao proxy como `Proxy-Authorization: Basic`. Use `%40`, `%3A` etc. para caracteres especiais na senha.
+- **`NO_PROXY`.** Lista separada por vírgulas ou espaços. Aceita `*` (nunca usar proxy), nomes de host (`exemplo.com`, que também cobre `api.exemplo.com`), sufixos com ponto ou curinga (`.exemplo.com`, `*.exemplo.com`), `host:porta` (`interno.local:8080`) e IPs (`127.0.0.1`, `[::1]`). Intervalos CIDR não são suportados.
+- **Redirects** são decididos a cada salto: um redirect para um host em `NO_PROXY` vai direto, e um de `http` para `https` passa a usar `HTTPS_PROXY`.
+- **Erros.** Se o proxy estiver inacessível, exigir autenticação (407) ou recusar o destino, a mensagem diz isso em português (código `PROXY_ERROR`). Usuário e senha do proxy nunca aparecem em mensagens de erro nem em logs; só `host:porta`.
+- **TLS.** Proxies que interceptam HTTPS (certificado próprio) exigem a CA da empresa, como descrito em "Certificados CA corporativos". Para o fetch via proxy valem as mesmas variáveis `NODE_EXTRA_CA_CERTS` / `NODE_OPTIONS=--use-system-ca`.
+
+### Retry
+
+Falhas transitórias são repetidas automaticamente, até **2 vezes** (3 tentativas no total):
+
+- **HTTP** 429, 502, 503 e 504;
+- **Erros de rede** transitórios: `ECONNRESET`, `ETIMEDOUT`, `EAI_AGAIN` e `UND_ERR_SOCKET`.
+
+A espera segue backoff exponencial com jitter (base de 500 ms: cerca de 0,25–0,5 s antes da 2ª tentativa e 0,5–1 s antes da 3ª). Se o servidor enviar `Retry-After` (em segundos ou como data HTTP), ele é usado no lugar do backoff. Se pedir mais de 10 s, **não há nova tentativa**: a falha HTTP é devolvida na hora (com um aviso do tempo pedido pelo servidor), para não martelar um host que já pediu pausa.
+
+Não há retry para 4xx definitivos (404, 403 etc.), outros 5xx (como 500), timeout, conteúdo não suportado nem resposta acima do limite de tamanho. O tempo limite é **total**, somando todas as tentativas e esperas: se a próxima espera não couber no tempo restante (por exemplo, no prazo global de uma conversão em lote), a falha original é devolvida sem nova tentativa. Em caso de esgotamento, a mensagem de erro é a da última tentativa.
+
+Na regra de domínio (URL reescrita com fallback para a original), o fallback só ocorre para 4xx definitivos (como 404) e conteúdo não suportado; um 429/5xx esgotado não dispara a busca da URL original no mesmo host. O fallback tem orçamento de tempo próprio, com o mesmo teto por URL.
+
 ## Parâmetros
 
 | Parâmetro | Tipo | Padrão | Descrição |
 |---|---|---|---|
 | `url` | string | obrigatório | URL `http://` ou `https://` da página. |
-| `mode` | `"article"` \| `"full"` | `"article"` | `article` extrai só o conteúdo principal (sem menu, rodapé e barra lateral). `full` converte o `<body>` inteiro; use quando a extração errar o conteúdo. |
-| `max_chars` | inteiro (100–500000) | `50000` | Limite de caracteres por resposta. |
-| `start_index` | inteiro ≥ 0 | `0` | Posição do documento onde a resposta começa, para paginar. |
+| `mode` | `"article"` \| `"full"` \| `"outline"` | `"article"` | `article` extrai só o conteúdo principal (sem menu, rodapé e barra lateral). `full` converte o `<body>` inteiro; use quando a extração errar o conteúdo. `outline` converte como `article`, mas devolve só o índice de headings (veja [Outline e seções](#outline-e-seções)). |
+| `max_chars` | inteiro (100–500000) | `50000` | Limite de caracteres por resposta. No `outline`, limita o tamanho do índice. |
+| `start_index` | inteiro ≥ 0 | `0` | Posição do documento onde a resposta começa, para paginar. Não se aplica ao `outline`. |
 | `include_links` | booleano | `false` | Anexa a seção `## Links da página` com os links do conteúdo. |
+| `section` | string | — | Devolve só uma seção do documento: slug, texto ou id do heading. Sem ele, o `#fragmento` da URL é usado se casar com um heading. Veja [Outline e seções](#outline-e-seções). |
 
-Além do texto, a resposta traz `structuredContent` com `{ url, source, total_chars, next_start_index, saved_path }`.
+Além do texto, a resposta traz `structuredContent` com `{ url, source, total_chars, document_chars, next_start_index, saved_path, section, headings, headings_truncated }` (`section` e `headings` são `null` fora de `section`/`outline`).
 
 ### Pasta de saída
 
@@ -116,6 +186,34 @@ Quando o documento passa de `max_chars`, a resposta termina com um marcador:
 ```
 
 Chame a tool de novo com o mesmo `url` e `start_index=49812`. O frontmatter aparece só na primeira parte. Um `start_index` além do fim do documento devolve erro.
+
+## Outline e seções
+
+Para páginas longas, evite trazer o documento inteiro: peça o índice e depois só a seção que interessa.
+
+1. `mode: "outline"` converte a página como `article` e devolve só o frontmatter (com `mode: outline`) e uma lista hierárquica dos headings. Cada item traz o nível, o texto, o **slug** estável e o offset inicial–final e o tamanho da seção:
+
+   ```
+   - Instalação (h2) — slug: `instalacao` — offset 412–2380 (1968 caracteres)
+     - Requisitos (h3) — slug: `requisitos` — offset 1790–2380 (590 caracteres)
+   ```
+
+   O `structuredContent` traz a mesma lista em `headings` (`{ heading, level, slug, id, start, end, chars }`) e `total_chars` com o tamanho do documento completo. Os offsets são posições de caracteres no **documento completo salvo em disco** (frontmatter incluído), então valem também para ler o arquivo em `saved_path` por intervalo. O índice não é paginado (`start_index` não se aplica), mas **`max_chars` limita o tamanho do texto**: se o índice (com frontmatter) não couber, aparecem só os primeiros headings que cabem, em linhas inteiras, e o texto termina com o aviso `[Índice truncado: exibidos X de Y headings. Use section="<slug>" numa seção pai, ou aumente max_chars, para ver o restante]`. O texto nunca passa de `max_chars` (com `max_chars` muito pequeno o frontmatter também é omitido), e `total_chars`/`document_chars` continuam sendo os do documento completo. Em páginas com milhares de headings (changelogs, referências de API), `headings` no `structuredContent` é limitado a 500 itens e `headings_truncated` vira `true`; para o restante, peça `section="<slug>"` numa seção pai.
+2. `section: "<slug>"` devolve só aquela seção.
+
+Regras de `section`:
+
+- **O que casa**, nesta ordem: slug (ou id HTML) exato; texto do heading exato, sem diferenciar maiúsculas nem acentos; prefixo do texto/slug; trecho contido. Prefixo e trecho só valem se casarem com um único heading. Uma correspondência exata vence prefixos (`API` não é ambíguo com `API REST`).
+- **Slugs**: texto em minúsculas, sem acentos, com hífens (`Instalação e uso` vira `instalacao-e-uso`). Headings repetidos ganham sufixo na ordem em que aparecem (`exemplo`, `exemplo-1`, `exemplo-2`); heading sem texto aproveitável vira `secao`.
+- **Fragmento da URL**: sem `section`, `https://site/pagina#instalacao` seleciona o heading cujo id HTML ou slug seja `instalacao`. Se nada casar, o fragmento é ignorado em silêncio e a página inteira é devolvida. No modo `outline` o fragmento é ignorado.
+- **Extensão da seção**: o heading e tudo até o próximo heading de nível igual ou menor (as subseções entram). Headings ATX (`##`) e setext (`===`/`---`) são reconhecidos; `#` dentro de blocos de código cercados é ignorado, então um bloco nunca é cortado ao meio.
+- **Frontmatter e paginação**: o frontmatter é mantido e ganha `section` e `section_slug`. `max_chars` e `start_index` paginam dentro da seção, e `total_chars`/`next_start_index` se referem a ela; `document_chars` traz o tamanho do documento completo e `section` no `structuredContent` descreve o heading escolhido. Funciona junto com `include_links` (a seção de links é uma seção própria, `links-da-pagina`).
+- **Erros**: seção inexistente ou ambígua devolve `isError` com uma mensagem em português listando até 10 headings (slug, texto e nível).
+- `outline` junto de `section` restringe o índice àquela seção e às suas subseções.
+
+O arquivo salvo continua sendo sempre o documento completo. `outline` grava no mesmo arquivo do modo `article` (mesma URL, mesmo conteúdo), então não há colisão nem arquivo extra.
+
+A tool de lote não tem `outline` nem `section`: ela trabalha com documentos inteiros (e descarta o `#fragmento` das URLs). Para índice ou seção de várias páginas, chame a tool de URL única para cada uma.
 
 ## Conversão em lote (v1.2.0)
 
@@ -180,6 +278,19 @@ O texto da resposta muda conforme o `dispatch` (manifesto, documentos inline ou 
 - **Nomes de arquivo:** iguais aos da tool de URL única (`<host>_<caminho>-<hash>.md`, com `.full` em `mode="full"`). O `slug` de cada item é o nome do arquivo sem `.md` e serve de identificador, inclusive como nome do subagente.
 - **Pasta de saída:** a mesma da tool de URL única; para trocar, defina `WEB2MD_OUTPUT_DIR`. O arquivo salvo contém sempre o documento completo, independentemente de `max_chars`.
 
+## Publicação
+
+Passo a passo para mantenedores (a versão fica em `package.json`, `manifest.json`, `server.json` — em dois campos — e `SERVER_VERSION` em `src/constants.ts`):
+
+1. Atualize a versão nesses lugares, rode `npm install --package-lock-only` e confira `npm run build && npm test`.
+2. Faça o merge na `master`. **Não é preciso criar a tag à mão:** o workflow `.github/workflows/release.yml` roda a cada push na `master` e, se a tag `v<versão>` ainda não existe, confere que a versão é a mesma em todos os arquivos, roda build e testes, gera o `web2md.mcpb`, publica no npm com provenance e só então cria a tag e o GitHub Release com o bundle anexado. Se a tag já existe (merge sem bump de versão), ele termina sem fazer nada.
+3. O workflow precisa do secret `NPM_TOKEN` no repositório. Se o `npm publish` falhar, nada é criado e uma nova execução (Actions, Re-run ou `workflow_dispatch`) tenta de novo; se a falha for depois do publish, a nova execução pula o publish porque a versão já está no npm.
+4. Publicação manual, se preferir: `npm login` e `npm publish` (o `prepublishOnly` limpa, compila e testa; `publishConfig.access` já é `public`).
+
+### MCP Registry (próximo passo)
+
+O repositório já tem o `server.json` e o `mcpName` (`io.github.carlosiwakuraa/web2md-mcp-server`) no `package.json`. Depois que a versão estiver no npm: instale o `mcp-publisher`, rode `mcp-publisher login github` e `mcp-publisher publish` na raiz do repositório.
+
 ## Exemplo de saída
 
 ```markdown
@@ -211,6 +322,7 @@ Os erros voltam como resultado com `isError: true` e uma mensagem que o Claude c
 - Página vazia após a extração, com a sugestão de usar `mode="full"`.
 - Página que provavelmente depende de JavaScript (pouco texto e muitos `<script>`).
 - `start_index` fora do documento.
+- `section` inexistente ou ambígua (a mensagem lista os headings disponíveis).
 
 Os logs vão para `stderr`; o `stdout` carrega só o protocolo.
 

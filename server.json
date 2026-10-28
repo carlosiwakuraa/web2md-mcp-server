@@ -1,0 +1,27 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.carlosiwakuraa/web2md-mcp-server",
+  "description": "Converte URLs em Markdown GFM fiel à estrutura original, localmente, via stdio.",
+  "repository": {
+    "url": "https://github.com/carlosiwakuraa/web2md-mcp-server",
+    "source": "github"
+  },
+  "version": "1.3.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@carlosiwakura/web2md-mcp-server",
+      "version": "1.3.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "WEB2MD_OUTPUT_DIR",
+          "description": "Pasta onde os arquivos .md convertidos são salvos (padrão: pasta temporária do sistema).",
+          "isRequired": false
+        }
+      ]
+    }
+  ]
+}

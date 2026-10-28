@@ -5,16 +5,24 @@
  */
 import type TurndownService from "turndown";
 
+/** Modos de conversão (também definem o nome do arquivo salvo). */
 export type Mode = "article" | "full";
+
+/** Modos aceitos pela tool de URL única: "outline" converte como "article" e devolve só o índice de headings. */
+export type ToolMode = Mode | "outline";
 
 /** Entrada já validada da tool (ver schemas/input.ts). */
 export interface ToolInput {
   url: string;
-  mode: Mode;
+  mode: ToolMode;
   max_chars: number;
   start_index: number;
   include_links: boolean;
   return_content: boolean;
+  /** Slug ou texto do heading cuja seção deve ser devolvida (estrito: erro se não casar). */
+  section?: string;
+  /** Fragmento da URL (`#x`) usado como seção quando `section` não vem (leniente: ignorado se não casar). */
+  fragment?: string;
 }
 
 // ---------------------------------------------------------------- etapas 1-2
@@ -90,6 +98,11 @@ export interface Frontmatter {
   /** ISO 8601 com offset local, ex.: 2026-10-20T22:32:00-03:00 */
   fetched_at: string;
   source: Source;
+  /** Só no modo outline. */
+  mode?: "outline";
+  /** Texto e slug do heading quando o documento é só uma seção (parâmetro `section` ou fragmento). */
+  section?: string;
+  section_slug?: string;
 }
 
 /** Resultado da conversão, ainda sem paginação. `body` começa com o H1. */
