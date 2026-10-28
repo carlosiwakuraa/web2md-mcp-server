@@ -1,9 +1,11 @@
 import type TurndownService from "turndown";
+import { capWhitespaceRuns, collapseLineBreaks } from "../text-util.js";
 import type { RuleRegistrar } from "../types.js";
 
 /**
  * Matemática: MathML, KaTeX, MathJax v2/v3 e Wikipedia (mwe-math) -> `$tex$` / `$$\ntex\n$$`.
- * O conteúdo TeX nunca é escapado. Prioridade da fonte do TeX:
+ * O TeX só é neutralizado (ver `neutralizeTex`) onde poderia quebrar o contexto `$...$`/`$$...$$`
+ * ou injetar Markdown/HTML na página; fórmulas comuns saem intactas. Prioridade da fonte do TeX:
  * <annotation encoding="application/x-tex"> > data-latex > MathML convertido > alttext/aria-label > texto.
  */
 
@@ -201,7 +203,7 @@ function cleanTex(raw: string, display: boolean): string {
     }
     if (wraps) tex = tex.slice(m[0].length, -1).trim();
   }
-  if (!display) tex = tex.replace(/\s*\n\s*/g, " ");
+  if (!display) tex = collapseLineBreaks(tex);
   return tex;
 }
 
@@ -316,9 +318,60 @@ export function extractMath(el: Element): MathResult {
   return { tex, display };
 }
 
+/** Escapa cada `$` que não está precedido de uma contrabarra "ativa" (número ímpar de `\`). */
+function escapeDollars(tex: string): string {
+  if (!tex.includes("$")) return tex;
+  let out = "";
+  let backslashes = 0;
+  for (const ch of tex) {
+    if (ch === "$") out += backslashes % 2 === 0 ? "\\$" : "$";
+    else out += ch;
+    backslashes = ch === "\\" ? backslashes + 1 : 0;
+  }
+  return out;
+}
+
+/** Linha que o Markdown (ou o nosso parser de headings/cercas) leria como estrutura de bloco. */
+function startsBlockSyntax(line: string): boolean {
+  const t = line.trimStart();
+  if (t === "") return false;
+  if (t[0] === "#" || t[0] === "`" || t[0] === "~") return true;
+  return /^(?:-+|=+)\s*$/.test(t); // sublinhado setext / hr
+}
+
+/**
+ * TeX seguro para ser emitido entre `$`/`$$`. Só mexe no que não é TeX legítimo
+ * ou é neutro em modo matemático:
+ *  - `$` solto vira `\$` (senão fecharia o contexto e o resto da página viraria Markdown);
+ *  - `](` ganha um `{}` no meio (não forma link Markdown) e `<` seguido de letra, `/`, `!` ou `?`
+ *    ganha um espaço quando há `>` adiante (não forma tag/autolink HTML) — espaços não contam em math;
+ *  - contrabarra solitária no fim (escaparia o `$` de fechamento) é descartada;
+ *  - quebras de linha: inline vira uma linha; display perde linhas em branco (um parágrafo
+ *    encerraria o bloco) e linhas que começariam `#`, cerca de código ou `---` ganham um `{}` na frente.
+ */
+export function neutralizeTex(raw: string, display: boolean): string {
+  let tex = capWhitespaceRuns(raw).replace(/\r\n?/g, "\n").replace(/[\u2028\u2029]/g, " ");
+  tex = display
+    ? tex
+        .split("\n")
+        .filter((line) => line.trim() !== "")
+        .map((line) => (startsBlockSyntax(line) ? `{}${line}` : line))
+        .join("\n")
+    : collapseLineBreaks(tex).trim();
+  tex = escapeDollars(tex);
+  if (tex.includes("](")) tex = tex.split("](").join("]{}(");
+  if (tex.includes(">") && tex.includes("<")) tex = tex.replace(/<(?=[A-Za-z/!?])/g, "< ");
+  let trailing = 0;
+  while (trailing < tex.length && tex[tex.length - 1 - trailing] === "\\") trailing++;
+  if (trailing % 2 === 1) tex = tex.slice(0, -1);
+  return tex.trim();
+}
+
 export function formatMath(info: MathInfo, forceInline = false): string {
-  if (info.display && !forceInline) return `\n\n$$\n${info.tex}\n$$\n\n`;
-  return `$${info.tex.replace(/\s*\n\s*/g, " ")}$`;
+  const tex = neutralizeTex(info.tex, info.display && !forceInline);
+  if (tex === "") return "";
+  if (info.display && !forceInline) return `\n\n$$\n${tex}\n$$\n\n`;
+  return `$${tex}$`;
 }
 
 // ---------------------------------------------------------------- registro

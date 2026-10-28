@@ -3,6 +3,7 @@
  * listas (inclui task list), blockquote, hr, br e listas de definição.
  */
 import type TurndownService from "turndown";
+import { collapseLineBreaks, escapeTrailingHashes, stripSpaceAndControls, trimEndSet, trimNewlines } from "../text-util.js";
 import type { RuleRegistrar } from "../types.js";
 
 // ---------------------------------------------------------------- utilitários
@@ -18,14 +19,20 @@ const BLOCK_NAMES = new Set([
 const HEADINGS = new Set(["H1", "H2", "H3", "H4", "H5", "H6"]);
 const MEANINGFUL_SELECTOR = "img,input,iframe,video,audio,svg,object,embed,picture,math,hr,table,a[href]";
 
-function trimNewlines(s: string): string {
-  return s.replace(/^\n+/, "").replace(/\n+$/, "");
-}
-
 function hasContent(el: Element): boolean {
   if (/\S/.test(el.textContent ?? "")) return true;
   if (/^(IMG|INPUT|IFRAME|VIDEO|AUDIO|SVG|OBJECT|EMBED|PICTURE|MATH|HR|TABLE)$/i.test(el.nodeName)) return true;
   return el.querySelector(MEANINGFUL_SELECTOR) !== null;
+}
+
+/**
+ * Filhos elemento via firstChild/nextSibling. `el.children` do JSDOM é um Proxy cujo acesso por índice
+ * é O(n) (namedItem), o que tornava listas com milhares de itens quadráticas.
+ */
+function elementChildren(el: Element): Element[] {
+  const out: Element[] = [];
+  for (let n = el.firstChild; n; n = n.nextSibling) if (n.nodeType === 1) out.push(n as Element);
+  return out;
 }
 
 function ancestorIs(node: Node, pred: (el: Element) => boolean): boolean {
@@ -38,7 +45,7 @@ function ancestorIs(node: Node, pred: (el: Element) => boolean): boolean {
 }
 
 function escapeAttr(v: string): string {
-  return v.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+  return v.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 // ------------------------------------------------------------------- headings
@@ -53,7 +60,8 @@ function emptyNamedAnchor(n: Node): Element | null {
 function headingIds(node: Element): string[] {
   const ids: string[] = [];
   const add = (v: string | null | undefined) => {
-    const t = (v ?? "").trim();
+    // Ids não têm whitespace nem controles; `\n# INJETADO` num id viraria uma linha de heading no corpo.
+    const t = stripSpaceAndControls(v ?? "");
     if (t && !ids.includes(t)) ids.push(t);
   };
   // `<a name="x"></a><h2>` imediatamente antes do título.
@@ -155,10 +163,10 @@ function isLooseList(list: Element): boolean {
   const cached = looseCache.get(list);
   if (cached !== undefined) return cached;
   let loose = false;
-  for (const li of Array.from(list.children)) {
+  for (const li of elementChildren(list)) {
     if (li.nodeName !== "LI") continue;
     let blocks = 0;
-    for (const c of Array.from(li.children)) {
+    for (const c of elementChildren(li)) {
       if (c.nodeName === "P") {
         loose = true;
         break;
@@ -178,18 +186,33 @@ function isBlankLi(li: Element): boolean {
   return !hasContent(li);
 }
 
+interface ListNumbers {
+  byItem: Map<Element, number>;
+  /** Valor do contador depois do último item (resultado para um `li` em branco). */
+  after: number;
+}
+
+const numberCache = new WeakMap<Element, ListNumbers>();
+
+/** Número de cada `li` da lista, calculado uma vez por lista (evita O(n²) em listas enormes). */
 function listNumber(list: Element, li: Element): number {
-  const items = Array.from(list.children).filter((c) => c.nodeName === "LI" && !isBlankLi(c));
-  const reversed = list.hasAttribute("reversed");
-  const startAttr = parseInt(list.getAttribute("start") ?? "", 10);
-  let cur = Number.isFinite(startAttr) ? startAttr : reversed ? items.length : 1;
-  for (const item of items) {
-    const v = parseInt(item.getAttribute("value") ?? "", 10);
-    if (Number.isFinite(v)) cur = v;
-    if (item === li) return cur;
-    cur += reversed ? -1 : 1;
+  let numbers = numberCache.get(list);
+  if (!numbers) {
+    const byItem = new Map<Element, number>();
+    const items = elementChildren(list).filter((c) => c.nodeName === "LI" && !isBlankLi(c));
+    const reversed = list.hasAttribute("reversed");
+    const startAttr = parseInt(list.getAttribute("start") ?? "", 10);
+    let cur = Number.isFinite(startAttr) ? startAttr : reversed ? items.length : 1;
+    for (const item of items) {
+      const v = parseInt(item.getAttribute("value") ?? "", 10);
+      if (Number.isFinite(v)) cur = v;
+      byItem.set(item, cur);
+      cur += reversed ? -1 : 1;
+    }
+    numbers = { byItem, after: cur };
+    numberCache.set(list, numbers);
   }
-  return cur;
+  return numbers.byItem.get(li) ?? numbers.after;
 }
 
 function findCheckbox(li: Element): HTMLInputElement | null {
@@ -244,8 +267,7 @@ export const registerBlockRules: RuleRegistrar = (td: TurndownService) => {
       const level = Number(node.nodeName.charAt(1));
       const ids = headingIds(node);
       const anchors = ids.map((id) => `<a id="${escapeAttr(id)}"></a>`).join("");
-      let text = content.replace(/\s*\n\s*/g, " ").trim();
-      text = text.replace(/ (#+)$/, " \\$1");
+      const text = escapeTrailingHashes(collapseLineBreaks(content).trim());
       if (!text) return anchors ? `\n\n${anchors}\n\n` : "";
       return `\n\n${anchors ? anchors + "\n" : ""}${"#".repeat(level)} ${text}\n\n`;
     },
@@ -260,7 +282,7 @@ export const registerBlockRules: RuleRegistrar = (td: TurndownService) => {
       if (ancestorIs(node, (el) => classTokens(el).some((t) => /^(linenos|linenodiv)$/i.test(t)))) return "";
       const out = { s: "" };
       collectPreText(node, out);
-      const code = out.s.replace(/\r\n?/g, "\n").replace(/\n+$/, "");
+      const code = trimEndSet(out.s.replace(/\r\n?/g, "\n"), "\n");
       if (!/\S/.test(code)) return "";
       const runs = code.match(/`+/g) ?? [];
       const longest = runs.reduce((m, r) => Math.max(m, r.length), 0);
@@ -345,7 +367,7 @@ export const registerBlockRules: RuleRegistrar = (td: TurndownService) => {
   td.addRule("w2m-dt", {
     filter: "dt",
     replacement: (content, node) => {
-      const text = content.replace(/\s*\n\s*/g, " ").trim();
+      const text = collapseLineBreaks(content).trim();
       if (!text) return "";
       const prev = node.previousElementSibling;
       const lead = prev && prev.nodeName === "DT" ? "\n" : "\n\n";

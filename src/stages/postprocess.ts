@@ -1,7 +1,13 @@
 import { errors } from "../errors.js";
+import { escapeHeadingText } from "../rules/inline.js";
+import { escapeTrailingHashes, stripClosingHashes, trimEndSet } from "../text-util.js";
 import type { Frontmatter, LinkRecord, PageSlice } from "../types.js";
+import { safeLinkHref } from "../url-safety.js";
 
 // ---------------------------------------------------------------- utilitários
+
+/** Espaços removidos do fim das linhas (o `\u00a0` é NBSP). */
+const LINE_TRAILING_WS = " \t\f\v\u00a0";
 
 const FENCE_RE = /^\s*(`{3,}|~{3,})(.*)$/;
 
@@ -53,7 +59,7 @@ export function postProcess(md: string): string {
       fence = nextFenceState(raw, fence);
       continue;
     }
-    const line = raw.replace(/[ \t\f\v ]+$/, "");
+    const line = trimEndSet(raw, LINE_TRAILING_WS);
     if (line === "") {
       blanks++;
       if (blanks <= 2) out.push("");
@@ -91,10 +97,7 @@ export function firstH1(md: string): string | undefined {
     if (fence) continue;
     const m = H1_RE.exec(line);
     if (m) {
-      const text = line
-        .slice(m[0].length)
-        .replace(/[ \t]+#+[ \t]*$/, "")
-        .trim();
+      const text = stripClosingHashes(line.slice(m[0].length)).trim();
       return text || undefined;
     }
   }
@@ -130,7 +133,8 @@ export function ensureSingleH1(md: string, fallbackTitle: string | undefined): s
   const result = lines.join("\n");
   if (seen) return result;
 
-  const title = fallbackTitle ? collapseWs(fallbackTitle) : "";
+  // Título vem da página: quebras viram espaço e a sintaxe Markdown é neutralizada.
+  const title = fallbackTitle ? escapeTrailingHashes(escapeHeadingText(collapseWs(fallbackTitle))) : "";
   if (!title) return result;
   const rest = result.replace(/^\n+/, "");
   return rest ? `# ${title}\n\n${rest}` : `# ${title}\n`;
@@ -139,9 +143,11 @@ export function ensureSingleH1(md: string, fallbackTitle: string | undefined): s
 // ---------------------------------------------------------------- collectLinks
 
 /**
- * Coleta `<a href>` do nó: URLs absolutas (via `resolve`), sem href vazio,
- * `javascript:` ou fragmento puro (`#x`), sem âncoras sem texto, deduplicado
- * por (href, texto). `mailto:` e `tel:` são mantidos.
+ * Coleta `<a href>` do nó: URLs absolutas (via `resolve`), sem href vazio ou
+ * fragmento puro (`#x`), sem âncoras sem texto, deduplicado por (href, texto).
+ * Só esquemas da allowlist (http, https, mailto, tel) sobrevivem; a checagem é
+ * feita na URL já resolvida, que o parser WHATWG normalizou (tabs/controles
+ * removidos), então `java&#9;script:` e afins são descartados.
  */
 export function collectLinks(root: Element, resolve: (raw: string) => string): LinkRecord[] {
   const seen = new Set<string>();
@@ -149,7 +155,7 @@ export function collectLinks(root: Element, resolve: (raw: string) => string): L
 
   for (const a of Array.from(root.querySelectorAll("a[href]"))) {
     const raw = (a.getAttribute("href") ?? "").trim();
-    if (!raw || raw.startsWith("#") || /^javascript:/i.test(raw)) continue;
+    if (!raw || raw.startsWith("#")) continue;
 
     let text = collapseWs(a.textContent ?? "");
     if (!text) {
@@ -158,7 +164,8 @@ export function collectLinks(root: Element, resolve: (raw: string) => string): L
     }
     if (!text) continue;
 
-    const href = resolve(raw);
+    const href = safeLinkHref(resolve(raw));
+    if (!href || href.startsWith("#")) continue;
     const key = `${href}\u0000${text}`;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -197,8 +204,46 @@ export function renderLinksSection(links: LinkRecord[]): string {
 
 // ------------------------------------------------------------- renderDocument
 
-/** Valor YAML: escalar simples quando seguro, senão string entre aspas duplas (JSON é YAML válido). */
-function yamlValue(v: string): string {
+// Todas as regexes abaixo são ancoradas e deterministicas (sem quantificadores
+// aninhados ambíguos), logo lineares mesmo em entradas patológicas.
+const YAML_BASED_INT_RE = /^[-+]?(?:0[xX][0-9a-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+)$/;
+const YAML_INF_NAN_RE = /^[-+]?\.(?:inf|nan)$/i;
+/** Sexagesimal do YAML 1.1: `1:30`, `190:20:30.15`. */
+const YAML_SEXAGESIMAL_RE = /^[-+]?\d[\d_]*(?::[0-5]?\d)+(?:\.[\d_]*)?$/;
+/** Inteiros/floats (YAML 1.1 com `_` e `,`, e 1.2 core): `12`, `1_000`, `1,000`, `.5`, `1.`, `1e3`. */
+const YAML_NUMBER_RE = /^[-+]?(?:\d[\d_,]*)?(?:\.[\d_.]*)?(?:[eE][-+]?\d+)?$/;
+const YAML_DATE_RE = /^\d{4}-\d{1,2}-\d{1,2}$/;
+const YAML_TIMESTAMP_RE =
+  /^\d{4}-\d{1,2}-\d{1,2}(?:[Tt]|[ \t]+)\d{1,2}:\d{2}:\d{2}(?:\.\d*)?(?:[ \t]*(?:Z|[-+]\d{1,2}(?::\d{2})?))?$/;
+const YAML_WORD_RE = /^(?:true|false|yes|no|on|off|null|~|y|n|=|<<)$/i;
+// eslint-disable-next-line no-control-regex
+const YAML_UNSAFE_CHARS_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\ufeff\ufffe\uffff]/;
+/** Substituto solitário (alto sem baixo depois, ou baixo sem alto antes), em unidades UTF-16. */
+const LONE_SURROGATE_RE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
+
+function looksLikeYamlNumber(v: string): boolean {
+  if (YAML_BASED_INT_RE.test(v) || YAML_INF_NAN_RE.test(v) || YAML_SEXAGESIMAL_RE.test(v)) return true;
+  // YAML_NUMBER_RE aceita string vazia/só "e5": exige início de dígito ou ponto.
+  const first = v[0] === "-" || v[0] === "+" ? v[1] : v[0];
+  if (first === undefined || !(first === "." || (first >= "0" && first <= "9"))) return false;
+  return YAML_NUMBER_RE.test(v);
+}
+
+/** JSON.stringify (JSON é YAML válido) + escape de C1/DEL/NEL/U+2028-9/BOM que o JSON deixa literais. */
+function yamlQuote(v: string): string {
+  return JSON.stringify(v).replace(
+    // eslint-disable-next-line no-control-regex
+    /[\u007f-\u009f\u2028\u2029\ufeff\ufffe\uffff]/g,
+    (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
+}
+
+/**
+ * Valor YAML: escalar simples quando seguro, senão string entre aspas duplas.
+ * Cita tudo que um parser YAML 1.1/1.2 leria como outro tipo (bool, null, int
+ * decimal/octal/hex/binário/sexagesimal, float, `.inf`/`.nan`, data, `=`, `<<`).
+ */
+export function yamlValue(v: string): string {
   const needsQuotes =
     v === "" ||
     /[\r\n\t"']/.test(v) ||
@@ -206,11 +251,20 @@ function yamlValue(v: string): string {
     /:(\s|$)/.test(v) ||
     /\s#/.test(v) ||
     /^[-?:,[\]{}#&*!|>%@`]/.test(v) ||
-    /^(true|false|yes|no|on|off|null|~|y|n)$/i.test(v) ||
-    /^[-+]?(\d[\d_]*)?\.?\d+([eE][-+]?\d+)?$/.test(v) ||
-    new RegExp("[\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029]").test(v);
-  return needsQuotes ? JSON.stringify(v) : v;
+    YAML_WORD_RE.test(v) ||
+    YAML_UNSAFE_CHARS_RE.test(v) ||
+    LONE_SURROGATE_RE.test(v) ||
+    YAML_DATE_RE.test(v) ||
+    YAML_TIMESTAMP_RE.test(v) ||
+    looksLikeYamlNumber(v);
+  return needsQuotes ? yamlQuote(v) : v;
 }
+
+/**
+ * `fetched_at` é gerado por nós (`formatLocalIso`) e é de propósito um timestamp YAML:
+ * só ele escapa da citação que `yamlValue` aplica a datas/timestamps.
+ */
+const ISO_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:\d{2})$/;
 
 /** Frontmatter YAML (`---`) na ordem do template da spec + linha em branco + corpo. */
 export function renderDocument(fm: Frontmatter, body: string): string {
@@ -228,7 +282,7 @@ export function renderDocument(fm: Frontmatter, body: string): string {
   ];
   const lines = fields
     .filter((f): f is [string, string] => f[1] !== undefined && f[1] !== "")
-    .map(([k, v]) => `${k}: ${yamlValue(v)}`);
+    .map(([k, v]) => `${k}: ${k === "fetched_at" && ISO_TIMESTAMP_RE.test(v) ? v : yamlValue(v)}`);
   return `---\n${lines.join("\n")}\n---\n\n${body}`;
 }
 
@@ -282,7 +336,7 @@ export function paginate(doc: string, startIndex: number, maxChars: number): Pag
   }
 
   const cut = chooseCut(doc, startIndex, hardEnd, maxChars);
-  const chunk = doc.slice(startIndex, cut).replace(/\s+$/, "");
+  const chunk = doc.slice(startIndex, cut).trimEnd();
   const marker = `\n\n---\n[Conteúdo truncado: exibidos caracteres ${startIndex}–${cut} de ${total}. Para continuar, chame novamente com start_index=${cut}]\n`;
   return { text: chunk + marker, total_chars: total, next_start_index: cut };
 }
