@@ -1,5 +1,7 @@
 import type TurndownService from "turndown";
+import { collapseLineBreaks } from "../text-util.js";
 import type { RuleRegistrar } from "../types.js";
+import { safeMediaUrl } from "../url-safety.js";
 
 /**
  * Elementos "embutidos":
@@ -84,7 +86,9 @@ function labelFor(el: Element, href: string): MediaInfo["label"] {
 export function mediaInfo(el: Element, resolveUrl: (raw: string) => string): MediaInfo | null {
   const raw = findSrc(el);
   if (!raw) return null;
-  const href = resolveUrl(raw);
+  // Allowlist (http/https) sobre a URL resolvida: `java\tscript:`, `data:`, `file:` etc. não passam.
+  const href = safeMediaUrl(resolveUrl(raw));
+  if (!href) return null;
   return { label: labelFor(el, href), title: findTitle(el), href };
 }
 
@@ -103,7 +107,7 @@ export function formatMediaLink(info: MediaInfo): string {
 
 /** Converte `summary` em uma linha, sem Markdown de bloco. */
 function oneLine(s: string): string {
-  return s.replace(/\s*\n+\s*/g, " ").trim();
+  return collapseLineBreaks(s).trim();
 }
 
 function isInsideDetails(node: Node): boolean {

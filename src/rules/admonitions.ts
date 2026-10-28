@@ -1,4 +1,5 @@
 import type TurndownService from "turndown";
+import { isJsWhitespace } from "../text-util.js";
 import type { RuleRegistrar } from "../types.js";
 
 /**
@@ -184,8 +185,15 @@ function hasMeaningfulText(n: Node): boolean {
   return (n.textContent ?? "").trim().length > 0;
 }
 
+/** Tira espaços e `:.-–—!` do fim (linear; a regex `/[...]+$/` equivalente é quadrática). */
+function trimTitleEnd(s: string): string {
+  let end = s.length;
+  while (end > 0 && (isJsWhitespace(s.charCodeAt(end - 1)) || ":.-–—!".includes(s[end - 1]!))) end--;
+  return s.slice(0, end);
+}
+
 function titleWordKind(text: string): AlertKind | null {
-  const t = norm(text).replace(/[\s:.\-–—!]+$/g, "").trim();
+  const t = trimTitleEnd(norm(text)).trim();
   return KIND_BY_TITLE[t] ?? null;
 }
 

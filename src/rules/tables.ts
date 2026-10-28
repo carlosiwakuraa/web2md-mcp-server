@@ -1,5 +1,7 @@
 import type TurndownService from "turndown";
+import { collapseLineBreaks, isJsWhitespace, trimEndSet } from "../text-util.js";
 import type { ConvertContext, RuleRegistrar } from "../types.js";
+import { safeImageSrc, safeLinkHref } from "../url-safety.js";
 import { mediaInfo } from "./embedded.js";
 import { extractMath, formatMath, isMathRoot } from "./math.js";
 
@@ -107,16 +109,61 @@ function prepareCell(cell: Element): Element | null {
   return clone;
 }
 
+/** `$$\ntex\n$$` -> `$tex$` (linear: cada busca avança, e sem fechamento nada mais casa). */
+function displayMathToInline(md: string): string {
+  let out = "";
+  let last = 0;
+  let from = 0;
+  for (;;) {
+    const open = md.indexOf("$$\n", from);
+    if (open === -1) break;
+    const close = md.indexOf("\n$$", open + 3);
+    if (close === -1) break;
+    out += `${md.slice(last, open)}$${collapseLineBreaks(md.slice(open + 3, close))}$`;
+    last = close + 3;
+    from = last;
+  }
+  return last === 0 ? md : out + md.slice(last);
+}
+
+/** Tira `<br>` (com espaço em volta) do início e do fim. */
+function trimBreaks(md: string): string {
+  let start = 0;
+  while (md.startsWith("<br>", start)) {
+    start += 4;
+    while (start < md.length && isJsWhitespace(md.charCodeAt(start))) start++;
+  }
+  let end = md.length;
+  for (;;) {
+    let k = end;
+    while (k > start && isJsWhitespace(md.charCodeAt(k - 1))) k--;
+    if (k - 4 >= start && md.startsWith("<br>", k - 4)) end = k - 4;
+    else break;
+  }
+  return md.slice(start, end);
+}
+
+/** Escapa `|` não escapado (número par de contrabarras antes): quebraria a tabela. */
+function escapePipes(md: string): string {
+  if (!md.includes("|")) return md;
+  let out = "";
+  let backslashes = 0;
+  for (const ch of md) {
+    if (ch === "|") out += backslashes % 2 === 0 ? "\\|" : "|";
+    else out += ch;
+    backslashes = ch === "\\" ? backslashes + 1 : 0;
+  }
+  return out;
+}
+
 function inlineMarkdown(td: TurndownService, prepared: Element): string {
   let md = td.turndown(prepared as unknown as HTMLElement);
   md = md.split(BR_MARK).join("<br>");
   // matemática display dentro de célula vira inline
-  md = md.replace(/\$\$\n([\s\S]*?)\n\$\$/g, (_m, tex: string) => `$${tex.replace(/\s*\n\s*/g, " ")}$`);
-  md = md.replace(/\s*\n+\s*/g, " ").trim();
-  md = md.replace(/^(?:<br>\s*)+|(?:\s*<br>)+$/g, "").trim();
-  // `|` não escapado quebraria a tabela
-  md = md.replace(/(\\*)\|/g, (m, bs: string) => (bs.length % 2 === 0 ? `${bs}\\|` : m));
-  return md;
+  md = displayMathToInline(md);
+  md = collapseLineBreaks(md).trim();
+  md = trimBreaks(md).trim();
+  return escapePipes(md);
 }
 
 // ---------------------------------------------------------------- GFM
@@ -175,8 +222,19 @@ function escHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+/** Valor de atributo numa única linha (uma quebra viraria linha nova no Markdown, ex.: `# INJETADO`). */
 function escAttr(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+  return s
+    .replace(/\s+/g, " ")
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+/** Início de linha dentro de `<pre>` que viraria heading/cerca no Markdown: usa entidade numérica. */
+function escapeLineStarts(text: string): string {
+  return text.replace(/^([ \t]*)([#`~])/gm, (_m, ws: string, c: string) => `${ws}&#${c.charCodeAt(0)};`);
 }
 
 const SKIP = new Set(["script", "style", "noscript", "template", "head", "svg", "link", "meta", "button", "select", "textarea", "input", "canvas"]);
@@ -240,16 +298,21 @@ function serializeElement(el: Element, ctx: ConvertContext): string {
   if (tag === "img") {
     const src = el.getAttribute("src") || el.getAttribute("data-src") || "";
     if (!src) return "";
+    const safe = safeImageSrc(/^\s*data:/i.test(src) ? src : ctx.resolveUrl(src));
+    if (!safe) return "";
     const alt = el.getAttribute("alt") ?? "";
-    return `<img src="${escAttr(ctx.resolveUrl(src))}" alt="${escAttr(alt)}">`;
+    return `<img src="${escAttr(safe)}" alt="${escAttr(alt)}">`;
   }
   if (tag === "a") {
     const inner = serializeChildren(el, ctx);
     const href = el.getAttribute("href");
-    if (!href || /^\s*javascript:/i.test(href)) return inner;
+    if (!href) return inner;
+    // Allowlist de esquemas sobre a URL resolvida; fora dela o link cai e fica o texto.
+    const safe = safeLinkHref(ctx.resolveUrl(href));
+    if (!safe) return inner;
     if (!inner.trim()) return "";
     const title = el.getAttribute("title");
-    return `<a href="${escAttr(ctx.resolveUrl(href))}"${title ? ` title="${escAttr(title)}"` : ""}>${inner}</a>`;
+    return `<a href="${escAttr(safe)}"${title ? ` title="${escAttr(title)}"` : ""}>${inner}</a>`;
   }
   if (tag === "video" || tag === "audio" || tag === "iframe") {
     const info = mediaInfo(el, (raw) => ctx.resolveUrl(raw));
@@ -257,9 +320,9 @@ function serializeElement(el: Element, ctx: ConvertContext): string {
     return `<a href="${escAttr(info.href)}">${escHtml(`${info.label}: ${info.title}`)}</a>`;
   }
   if (tag === "pre") {
-    const text = (el.textContent ?? "").replace(/\n+$/, "");
+    const text = trimEndSet(el.textContent ?? "", "\n");
     // linha em branco encerraria o bloco HTML do CommonMark: usa entidade
-    const safe = escHtml(text).replace(/\n{2,}/g, (m) => `\n${"&#10;".repeat(m.length - 1)}`);
+    const safe = escapeLineStarts(escHtml(text)).replace(/\n{2,}/g, (m) => `\n${"&#10;".repeat(m.length - 1)}`);
     return `<pre><code>${safe}</code></pre>`;
   }
   if (tag === "ol") {

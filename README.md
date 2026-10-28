@@ -162,7 +162,7 @@ Na regra de domínio (URL reescrita com fallback para a original), o fallback s�
 | `mode` | `"article"` \| `"full"` \| `"outline"` | `"article"` | `article` extrai só o conteúdo principal (sem menu, rodapé e barra lateral). `full` converte o `<body>` inteiro; use quando a extração errar o conteúdo. `outline` converte como `article`, mas devolve só o índice de headings (veja [Outline e seções](#outline-e-seções)). |
 | `max_chars` | inteiro (100–500000) | `50000` | Limite de caracteres por resposta. No `outline`, limita o tamanho do índice. |
 | `start_index` | inteiro ≥ 0 | `0` | Posição do documento onde a resposta começa, para paginar. Não se aplica ao `outline`. |
-| `include_links` | booleano | `false` | Anexa a seção `## Links da página` com os links do conteúdo. |
+| `include_links` | booleano | `false` | Anexa a seção `## Links da página` com os links do conteúdo. Só entram links `http`, `https`, `mailto` e `tel`; outros esquemas (`javascript:`, `data:`, `file:` etc.) são descartados e o texto é mantido. |
 | `section` | string | — | Devolve só uma seção do documento: slug, texto ou id do heading. Sem ele, o `#fragmento` da URL é usado se casar com um heading. Veja [Outline e seções](#outline-e-seções). |
 
 Além do texto, a resposta traz `structuredContent` com `{ url, source, total_chars, document_chars, next_start_index, saved_path, section, headings, headings_truncated }` (`section` e `headings` são `null` fora de `section`/`outline`).

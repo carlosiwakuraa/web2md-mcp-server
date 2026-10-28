@@ -3,7 +3,9 @@
  * imagens e checkboxes soltos. Também normaliza NBSP -> espaço antes da conversão.
  */
 import type TurndownService from "turndown";
+import { trimEndSet, trimStartSet } from "../text-util.js";
 import type { ConvertContext, RuleRegistrar } from "../types.js";
+import { safeImageSrc, safeLinkHref } from "../url-safety.js";
 
 // ------------------------------------------------------------------- escape
 
@@ -39,6 +41,15 @@ export function escapeMarkdown(text: string): string {
   s = s.replace(/^(-{2,}|={1,})\s*$/, (m) => "\\" + m);
   s = s.replace(/^(\d{1,9})([.)])(?=\s|$)/, "$1\\$2");
   return s;
+}
+
+/**
+ * Escape para texto que vai numa linha de heading (`# ...`) fora de tabela: como
+ * `escapeMarkdown`, mas sem escapar `|` (que só tem significado em tabelas).
+ * O chamador já colapsou as quebras de linha.
+ */
+export function escapeHeadingText(text: string): string {
+  return escapeMarkdown(text).replace(/\\\|/g, "|");
 }
 
 // ---------------------------------------------------------------- utilitários
@@ -113,7 +124,7 @@ export function parseSrcset(srcset: string): SrcsetCandidate[] {
     let url = srcset.slice(start, i);
     let descriptor = "";
     if (url.endsWith(",")) {
-      url = url.replace(/,+$/, "");
+      url = trimEndSet(url, ",");
     } else {
       while (i < n && isWs(srcset[i]!)) i++;
       start = i;
@@ -249,7 +260,7 @@ export const registerInlineRules: RuleRegistrar = (td: TurndownService, ctx: Con
     replacement: (_content, node) => {
       const fw = (node as unknown as { flankingWhitespace?: { leading: string; trailing: string } }).flankingWhitespace;
       let text = node.textContent ?? "";
-      if (fw && (fw.leading || fw.trailing)) text = text.replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, "");
+      if (fw && (fw.leading || fw.trailing)) text = trimStartSet(trimEndSet(text, " \t\r\n"), " \t\r\n");
       text = text.replace(/\r?\n|\r/g, " ");
       if (text === "") return "";
       let len = 1;
@@ -275,11 +286,14 @@ export const registerInlineRules: RuleRegistrar = (td: TurndownService, ctx: Con
       const text = inlineLinkText(content);
       if (!text) return "";
       const rawHref = (node.getAttribute("href") ?? "").trim();
-      if (!rawHref || /^javascript:/i.test(rawHref.replace(/[\u0000- ]/g, ""))) return text;
+      if (!rawHref) return text;
       const plain = (node.textContent ?? "").replace(/\s+/g, " ").trim();
       if (isPermalink(node, rawHref, plain)) return "";
 
       const url = rawHref.startsWith("#") ? rawHref : ctx.resolveUrl(rawHref);
+      // Allowlist de esquemas sobre a URL resolvida (o parser WHATWG já removeu tabs/controles):
+      // javascript:, data:, vbscript:, file: etc. perdem o link e ficam só com o texto.
+      if (!safeLinkHref(url)) return text;
 
       // Texto == URL -> autolink.
       if (!node.querySelector("img")) {
@@ -301,7 +315,8 @@ export const registerInlineRules: RuleRegistrar = (td: TurndownService, ctx: Con
     replacement: (_content, node) => {
       const raw = imageSource(node);
       if (!raw) return "";
-      const src = /^data:/i.test(raw) ? raw : ctx.resolveUrl(raw);
+      const src = safeImageSrc(/^data:/i.test(raw) ? raw : ctx.resolveUrl(raw));
+      if (!src) return "";
       const alt = escapeMarkdown(cleanAttr(node.getAttribute("alt")));
       const title = escapeTitle(cleanAttr(node.getAttribute("title")));
       return `![${alt}](${formatDestination(src)}${title ? ` "${title}"` : ""})`;
