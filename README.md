@@ -167,6 +167,33 @@ O servidor respeita as variáveis de ambiente de proxy padrão. Defina-as via `e
 - **Erros.** Se o proxy estiver inacessível, exigir autenticação (407) ou recusar o destino, a mensagem diz isso em português (código `PROXY_ERROR`). Usuário e senha do proxy nunca aparecem em mensagens de erro nem em logs; só `host:porta`.
 - **TLS.** Proxies que interceptam HTTPS (certificado próprio) exigem a CA da empresa, como descrito em "Certificados CA corporativos". Para o fetch via proxy valem as mesmas variáveis `NODE_EXTRA_CA_CERTS` / `NODE_OPTIONS=--use-system-ca`.
 
+### Bloqueio de rede privada (opt-in)
+
+As URLs são escolhidas, direta ou indiretamente, pelo modelo (por exemplo, a partir do conteúdo de outra página), e o servidor faz a requisição **da sua máquina**, possivelmente dentro de uma rede corporativa ou VPN. Um alvo malicioso pode, então, tentar fazer o servidor buscar endereços internos (SSRF): `localhost`, `10.x`, `192.168.x`, serviços de metadados em `169.254.169.254` etc. As respostas só voltam se forem HTML ou Markdown (JSON e `text/plain` já são recusados), mas a proteção abaixo fecha a porta de vez.
+
+**O padrão permite destinos internos, de propósito**: muita gente usa o servidor para ler wikis, documentação e portais de intranet. Ligue o bloqueio quando o servidor roda em rede corporativa/VPN e você não precisa converter páginas internas, ou quando o modelo processa conteúdo de terceiros não confiável.
+
+| Variável | Efeito |
+| --- | --- |
+| `WEB2MD_BLOCK_PRIVATE_NETWORKS=1` | Bloqueia destinos privados e reservados: `127.0.0.0/8`, `10/8`, `172.16/12`, `192.168/16`, `169.254/16`, `100.64/10`, `0/8`, multicast e faixas reservadas do IPv4; `::`, `::1`, `fc00::/7`, `fe80::/10`, multicast e endereços IPv4-mapeados/compatíveis do IPv6 (`::ffff:127.0.0.1`); e os nomes `localhost`, `*.localhost`, `*.local` e `*.internal`. Aceita `1`, `true`, `yes` ou `on`. |
+| `WEB2MD_ALLOWED_HOSTS` | Lista separada por vírgulas. Quando definida, **só** esses hosts (e seus subdomínios) são permitidos. Ex.: `docs.exemplo.com,.mdn.dev`. |
+| `WEB2MD_BLOCKED_HOSTS` | Lista separada por vírgulas de hosts (e subdomínios) a negar. |
+| `WEB2MD_ALLOW_HTTPS_DOWNGRADE=1` | Permite um redirect de `https://` para `http://` (veja abaixo). |
+| `WEB2MD_MAX_BODY_MB` | Limite do corpo baixado, de 1 a 50 MB (padrão 10 MB). Valores fora da faixa são ajustados. |
+
+Como funciona, com `WEB2MD_BLOCK_PRIVATE_NETWORKS=1`:
+
+- **Nome e IP literal da URL** são validados antes de qualquer conexão e **a cada salto de redirect**. Formas alternativas de escrever o IP (`2130706433`, `0x7f000001`, `0177.0.0.1`, `127.1`, `[::ffff:127.0.0.1]`) são normalizadas e recusadas.
+- **IP resolvido.** Para nomes, o servidor resolve o DNS, recusa a conexão se **qualquer** endereço devolvido for privado e conecta apenas nos endereços já validados (sem segunda resolução). Isso cobre nomes públicos que apontam para IPs internos e DNS rebinding.
+- **`WEB2MD_ALLOWED_HOSTS` e `WEB2MD_BLOCKED_HOSTS`** valem para a URL e para cada redirect, e podem ser usados sozinhos, sem o bloqueio de rede privada. A allowlist restringe, mas não anula o bloqueio de rede privada: um host interno na allowlist continua bloqueado se `WEB2MD_BLOCK_PRIVATE_NETWORKS=1`.
+- **Erros genéricos.** Com qualquer uma dessas restrições ativa, destino bloqueado e falhas de conexão (recusada, host inexistente, timeout) devolvem a mesma mensagem, `Destino bloqueado pela política de rede do servidor ou inacessível`, sem revelar o IP resolvido nem o motivo. Assim, uma lista de URLs não serve para mapear hosts e portas internos. Sem as variáveis, as mensagens detalhadas continuam como antes.
+
+**Limitação com proxy.** Quando a URL vai por `HTTP_PROXY`/`HTTPS_PROXY`, quem resolve o nome e conecta é o proxy, e o servidor não vê o IP. Nesse caso valem só as checagens de nome e de IP literal da URL (inclusive a cada redirect) e as listas de hosts; um nome público que aponte para um IP interno só pode ser barrado pelo próprio proxy. Destinos em `NO_PROXY` vão direto e passam pela validação completa. Também com proxy, status HTTP e content-type de respostas continuam aparecendo nas mensagens de erro. Outras limitações: nomes de um só rótulo (como `intranet`) só são bloqueados pelo IP resolvido, e o bloqueio por nome (`*.local`, `*.internal`) é uma convenção, não uma garantia sobre a sua rede.
+
+**Redirect de `https://` para `http://`** é recusado por padrão, com um erro claro, e o destino `http://` não chega a ser requisitado. A regra vale quando algum salto sai de `https://` (uma URL inicial `http://` pode seguir redirects normalmente). Para aceitar, defina `WEB2MD_ALLOW_HTTPS_DOWNGRADE=1`. O servidor segue até 10 redirects.
+
+**Outros limites.** A URL de entrada tem no máximo 2048 caracteres. A detecção automática de charset analisa só os primeiros 64 KB do corpo, para não travar o servidor em respostas grandes. Um `Retry-After` exagerado aparece como duração legível (por exemplo, "mais de 24 h").
+
 ### Retry
 
 Falhas transitórias são repetidas automaticamente, até **2 vezes** (3 tentativas no total):
