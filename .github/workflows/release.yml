@@ -25,9 +25,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Node 22: o Vitest 4 (rolldown) exige Node ^20.19 || >=22.12 para os testes; o pacote em si roda em >=20.18.1.
       - uses: actions/setup-node@v4
         with:
-          node-version: 20.18.1
+          node-version: 22
           cache: npm
           registry-url: https://registry.npmjs.org
 
